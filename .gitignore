@@ -1,0 +1,51 @@
+# Compiled Elisp files
+*.elc
+
+# Packaging
+.cask
+dist/
+
+# Backup files
+*~
+\#*\#
+.#*
+
+# Undo-tree save-files
+*.~undo-tree
+
+# Temporary files
+tmp/
+*.wav
+*.json
+*.log 
+*.xml
+
+# Large model files
+models/*.onnx
+models/*.json
+
+# Binary files and libraries
+bin/*.dylib
+bin/piper
+bin/espeak-ng-data/
+
+# Scripts should be tracked
+!bin/*.sh
+
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor specific
+.dir-locals.el
+
+# Auto-generated files
+auto-save-list/
+elpa/
+.last-package-update-day
+
+# Local configuration
+config.local.el
