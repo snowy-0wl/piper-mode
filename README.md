@@ -41,6 +41,11 @@ Add this to your Emacs configuration:
             :repo "snowy-0wl/piper-mode"
             :files ("*.el" "bin" "models" "setup-piper.sh"))
   :config
+  (when (not (file-exists-p (expand-file-name "models/en_US-joe-medium.onnx"
+                                             (file-name-directory (locate-library "piper-mode")))))
+    (let ((default-directory (file-name-directory (locate-library "piper-mode"))))
+      (shell-command "chmod +x setup-piper.sh")
+      (shell-command "./setup-piper.sh .")))
   (piper-mode))
 ```
 
