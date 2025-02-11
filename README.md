@@ -82,10 +82,28 @@ The package provides several customization options:
 ;; Set custom installation directory
 (setq piper-install-dir "/path/to/custom/install")
 
-;; Use a different voice model
-(setq piper-voice-model "/path/to/custom/model.onnx")
+;; Set default voice model (English - Joe Medium)
+(setq piper-voice-model (expand-file-name "models/en_US-joe-medium.onnx"
+                                        (file-name-directory (locate-library "piper-mode"))))
 
-;; Change the URL for fetching available models
+;; Or use a different language model (e.g., Russian - Dmitri Medium)
+(setq piper-voice-model (expand-file-name "models/ru_RU-dmitri-medium.onnx"
+                                        (file-name-directory (locate-library "piper-mode"))))
+
+;; If using use-package, you can set it in :custom section
+(use-package piper-mode
+  :straight (piper-mode
+            :type git
+            :host github
+            :repo "snowy-0wl/piper-mode"
+            :files ("*.el" "bin" "models" "setup-piper.sh"))
+  :custom
+  (piper-voice-model (expand-file-name "models/en_US-joe-medium.onnx"
+                                     (file-name-directory (locate-library "piper-mode"))))
+  :config
+  (piper-mode))
+
+;; Change the URL for fetching available models (if needed)
 (setq piper-models-url "https://raw.githubusercontent.com/rhasspy/piper/master/VOICES.md")
 
 ;; Adjust process timeout (default: 30 seconds)
