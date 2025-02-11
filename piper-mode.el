@@ -3,7 +3,7 @@
 ;; Author: snowy-0wl
 ;; Maintainer: snowy-0wl
 ;; Version: 0.5
-;; Package-Requires: ((emacs "27.1") (json "1.4"))
+;; Package-Requires: ((emacs "27.1") (json "1.4") (cl-lib "0.5"))
 ;; Keywords: multimedia, tts, accessibility, speech
 ;; URL: https://github.com/snowy-0wl/piper-mode
 
@@ -23,6 +23,7 @@
 ;; - piper-stop: Stop speaking and clean up
 
 (require 'json)
+(require 'cl-lib)
 
 (defgroup piper nil
   "Text-to-speech using Piper TTS."
@@ -43,10 +44,193 @@ If nil, will be set automatically based on package installation location."
 
 (defcustom piper-voice-model nil
   "Path to the Piper voice model file.
-If nil, will use the default model in the models directory."
+If nil, will prompt to select a model using `piper-select-model'."
   :type '(choice (const :tag "Default model" nil)
                 (file :tag "Custom model file"))
   :group 'piper)
+
+(defcustom piper-models-url "https://raw.githubusercontent.com/rhasspy/piper/master/VOICES.md"
+  "URL to fetch available voice models from."
+  :type 'string
+  :group 'piper)
+
+(defvar piper--available-models nil
+  "Cache of available voice models.")
+
+(defvar piper--debug t
+  "Enable debug logging.")
+
+(defun piper--log (format-string &rest args)
+  "Log a message with FORMAT-STRING and ARGS if debug is enabled."
+  (when piper--debug
+    (let ((message-log-max t))
+      (apply #'message (concat "[piper] " format-string) args))))
+
+(defun piper--clean-url (url)
+  "Clean URL by removing query parameters and fragments."
+  (let ((base-url (car (split-string url "[?#]")))
+        (has-download (string-match-p "\\?download=true" url)))
+    (if has-download
+        (concat base-url "?download=true")
+      base-url)))
+
+(defun piper--get-config-url (model-url)
+  "Get config URL from model URL."
+  (let* ((clean-url (piper--clean-url model-url))
+         (config-url (if (string-match "\\.onnx$" clean-url)
+                        (concat (substring clean-url 0 (match-beginning 0)) ".onnx.json")
+                      (concat clean-url ".json"))))
+    (piper--log "Generated config URL: %s" config-url)
+    config-url))
+
+(cl-defstruct (piper-model (:constructor piper-model-create))
+  "Structure for storing voice model information."
+  name url lang-name lang-code voice quality)
+
+(defun piper--parse-model-line (line voice lang-name lang-code)
+  "Parse a model line containing quality and URL."
+  (when (string-match "^\\s-+\\* \\([^-]+\\).*\\[model\\](\\([^)]+\\))" line)
+    (let ((quality (string-trim (match-string 1 line)))
+          (url (match-string 2 line)))
+      (piper-model-create
+       :name (format "%s - %s (%s)" voice quality (string-trim lang-name))
+       :url url
+       :lang-name (string-trim lang-name)
+       :lang-code (string-trim lang-code "\``")
+       :voice voice
+       :quality quality))))
+
+(defun piper--fetch-available-models ()
+  "Fetch and parse available models from piper-models-url."
+  (with-temp-buffer
+    (url-insert-file-contents piper-models-url)
+    (let ((models nil))
+      ;; Parse each language section
+      (while (re-search-forward "^\\* \\([^(]+\\)(\\(`[^`]+`\\)" nil t)
+        (let ((lang-name (match-string 1))
+              (lang-code (match-string 2)))
+          (save-excursion
+            ;; Parse each voice in the language
+            (while (and (forward-line 1)
+                       (looking-at "^\\s-+\\* \\([^\n]+\\)"))
+              (let ((voice (string-trim (match-string 1))))
+                (save-excursion
+                  ;; Parse each quality level for the voice
+                  (while (and (forward-line 1)
+                             (looking-at "^\\s-+\\* .*\\[model\\]")
+                             (not (looking-at "^\\s-+\\* [^-]+$")))
+                    (when-let ((model (piper--parse-model-line
+                                      (buffer-substring (line-beginning-position)
+                                                      (line-end-position))
+                                      voice lang-name lang-code)))
+                      (push model models)))))))))
+      (setq piper--available-models (nreverse models))))
+  piper--available-models)
+
+(defun piper--handle-download (output-file reporter callback)
+  "Handle download to OUTPUT-FILE, update REPORTER, and call CALLBACK when done."
+  (when reporter
+    (progress-reporter-done reporter))
+  (when callback
+    (funcall callback)))
+
+(defun piper--download-model (url output-file)
+  "Download model from URL to OUTPUT-FILE using curl."
+  (make-directory (file-name-directory output-file) t)
+  (let* ((model-url (if (string-match-p "\?download=true" url)
+                       url
+                     (concat url "?download=true")))
+         (clean-output-file (piper--clean-url output-file))
+         (model-reporter (make-progress-reporter "Downloading voice model..." 0 100))
+         (config-reporter (make-progress-reporter "Downloading model config..." 0 100))
+         (process-connection-type nil)  ; Use pipes for curl output
+         (temp-buffer (generate-new-buffer " *curl-output*")))
+    (unwind-protect
+        (progn
+          (piper--log "Starting download of %s to %s" model-url output-file)
+          (piper--log "Clean output file: %s" clean-output-file)
+          
+          ;; Download model file
+          (let ((result (call-process "curl" nil temp-buffer nil
+                                     "-L" "-f" "-o" clean-output-file
+                                     "--create-dirs"
+                                     "--progress-bar"
+                                     "-A" "Mozilla/5.0"
+                                     "-H" "Accept: application/octet-stream"
+                                     model-url)))
+            (if (= result 0)
+                (progn
+                  (progress-reporter-done model-reporter)
+                  ;; Download config file
+                  (let* ((config-url (concat (string-remove-suffix "?download=true" model-url) ".json?download=true"))
+                         (config-result (call-process "curl" nil temp-buffer nil
+                                                    "-L" "-f" "-o" (concat clean-output-file ".json")
+                                                    "--create-dirs"
+                                                    "--progress-bar"
+                                                    "-A" "Mozilla/5.0"
+                                                    "-H" "Accept: application/json"
+                                                    config-url)))
+                    (progress-reporter-done config-reporter)
+                    (if (= config-result 0)
+                        (progn
+                          (message "Model and config downloaded successfully.")
+                          (piper--log "Download completed successfully"))
+                      (error "Failed to download config file: %s" config-result))))
+              (error "Failed to download model file: %s" result))))
+      ;; Cleanup
+      (when (buffer-live-p temp-buffer)
+        (kill-buffer temp-buffer)))))
+
+;;;###autoload
+(defun piper-select-model ()
+  "Select and switch to a different voice model."
+  (interactive)
+  (unless piper--available-models
+    (message "Fetching available models...")
+    (piper--fetch-available-models))
+  
+  ;; Group models by language
+  (let* ((langs (delete-dups
+                 (mapcar (lambda (m) (cons (piper-model-lang-name m)
+                                          (piper-model-lang-code m)))
+                        piper--available-models)))
+         ;; First select language
+         (selected-lang (completing-read
+                        "Select language: "
+                        (mapcar (lambda (l) (format "%s (%s)" (car l) (cdr l))) langs)
+                        nil t))
+         (lang-name (car (split-string selected-lang " (")))
+         ;; Filter models for selected language
+         (lang-models (seq-filter
+                      (lambda (m) (string= (piper-model-lang-name m) lang-name))
+                      piper--available-models))
+         ;; Then select specific model
+         (model-choices (mapcar (lambda (m)
+                                (cons (format "%s - %s"
+                                              (piper-model-voice m)
+                                              (piper-model-quality m))
+                                      m))
+                              lang-models))
+         (selected-model-name (completing-read
+                             (format "Select %s voice: " lang-name)
+                             (mapcar #'car model-choices)
+                             nil t))
+         (selected-model (cdr (assoc selected-model-name model-choices)))
+         (model-url (piper-model-url selected-model))
+         (clean-url (piper--clean-url model-url))
+         (model-file (expand-file-name
+                     (file-name-nondirectory clean-url)
+                     (expand-file-name "models" (piper--get-install-dir)))))
+    
+    ;; Download if needed
+    (unless (file-exists-p model-file)
+      (message "Downloading model %s..." (piper-model-name selected-model))
+      (piper--download-model model-url model-file))
+    
+    (setq piper-voice-model model-file)
+    (message "Switched to model: %s (%s)"
+             selected-model-name
+             (piper-model-lang-name selected-model))))
 
 (defcustom piper-process-timeout 30
   "Timeout in seconds for Piper TTS process."
@@ -136,6 +320,9 @@ If NO-BLOCK is non-nil, run asynchronously."
           (error "Piper TTS failed with exit code %d: %s" exit-code (buffer-string)))))
     temp-wav))
 
+(defconst piper-default-model "en_US-joe-medium.onnx"
+  "Default voice model filename.")
+
 (defun piper--initialize-paths ()
   "Initialize paths based on install directory."
   (let ((install-dir (piper--get-install-dir)))
@@ -143,7 +330,8 @@ If NO-BLOCK is non-nil, run asynchronously."
     (unless piper-script-path
       (setq piper-script-path (piper--get-script-path)))
     (unless piper-voice-model
-      (setq piper-voice-model (expand-file-name "models/en_US-joe-medium.onnx" install-dir)))
+      (when (yes-or-no-p "No voice model selected. Would you like to select one now? ")
+        (piper-select-model)))
     (unless piper-temp-dir
       (setq piper-temp-dir (piper--get-temp-dir)))))
 
@@ -220,8 +408,18 @@ If NO-BLOCK is non-nil, run asynchronously."
 (defun piper--handle-straight-build ()
   "Handle straight.el build directory cleanup and setup."
   (let ((build-dir (expand-file-name "straight/build/piper-mode" user-emacs-directory)))
+    ;; Only remove elisp and script files, preserve models and binaries
     (when (file-exists-p build-dir)
-      (call-process "rm" nil nil nil "-rf" build-dir))))
+      (dolist (file (directory-files build-dir t))
+        (let ((base-name (file-name-nondirectory file)))
+          (unless (or (string= base-name ".")
+                     (string= base-name "..")
+                     (string= base-name "models")
+                     (string= base-name "bin")
+                     (string= base-name "tmp"))
+            (if (file-directory-p file)
+                (delete-directory file t)
+              (delete-file file))))))))
 
 (defun piper--before-straight-rebuild (orig-fun &rest args)
   "Advice to run before straight-rebuild-package for piper-mode."
