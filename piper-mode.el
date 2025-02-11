@@ -85,47 +85,188 @@ If nil, will prompt to select a model using `piper-select-model'."
 
 (cl-defstruct (piper-model (:constructor piper-model-create))
   "Structure for storing voice model information."
-  name url lang-name lang-code voice quality)
+  name model-url config-url lang-name lang-code voice quality)
 
-(defun piper--parse-model-line (line voice lang-name lang-code)
-  "Parse a model line containing quality and URL."
-  (when (string-match "^\\s-+\\* \\([^-]+\\).*\\[model\\](\\([^)]+\\))" line)
-    (let ((quality (string-trim (match-string 1 line)))
-          (url (match-string 2 line)))
-      (piper-model-create
-       :name (format "%s - %s (%s)" voice quality (string-trim lang-name))
-       :url url
-       :lang-name (string-trim lang-name)
-       :lang-code (string-trim lang-code "\``")
-       :voice voice
-       :quality quality))))
+(defun piper--parse-model-url (url)
+  "Extract model information from URL.
+Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invalid."
+  (piper--log "Parsing URL: %s" url)
+  ;; Try to match the URL pattern, ignoring query parameters
+  (when (string-match "huggingface\\.co/[^/]+/[^/]+/[^/]+/\\([^/]+\\)/\\([^/]+\\)/\\([^/]+\\)/\\([^/]+\\)/[^?]+\\.onnx" url)
+    (let ((lang (match-string 1 url))
+          (lang-code (match-string 2 url))
+          (voice (match-string 3 url))
+          (quality (match-string 4 url)))
+      (piper--log "Found model: lang=%s code=%s voice=%s quality=%s" lang lang-code voice quality)
+      (when (and lang lang-code voice quality)
+        (piper-model-create
+         :name (format "%s - %s (%s)" voice quality lang)
+         :model-url url
+         :config-url (piper--get-config-url url)
+         :lang-name lang
+         :lang-code lang-code
+         :voice voice
+         :quality quality)))))
+
+(defvar piper--available-models nil
+  "List of available Piper TTS models.")
+
+(defun file-basename (path &optional ext)
+  "Return the basename of PATH, optionally removing extension EXT if specified."
+  (let ((base (file-name-nondirectory path)))
+    (if ext
+        (if (string-match (concat (regexp-quote ext) "$") base)
+            (substring base 0 (match-beginning 0))
+          base)
+      base)))
+
+(defun piper--download-models-file (url)
+  "Download models file from URL and return path to temp file."
+  (let ((temp-file (make-temp-file "piper-models")))
+    (piper--log "Fetching models from %s" url)
+    (let ((curl-status (call-process "curl" nil nil nil
+                                    "--silent" "--fail" "--location"
+                                    "--output" temp-file
+                                    url)))
+      (unless (= curl-status 0)
+        (error "Failed to fetch models: curl exited with status %s" curl-status)))
+    temp-file))
+
+(defun piper--parse-model-info (model-url)
+  "Parse model info from MODEL-URL and return components."
+  (let* ((url-parts (split-string model-url "/"))
+         (file-name (car (last url-parts)))
+         (name-parts (split-string (file-basename file-name ".onnx") "-")))
+    (list :lang-code (concat (car name-parts) "_" (cadr name-parts))
+          :voice (caddr name-parts))))
+
+(defun piper--create-model-entry (model-url config-url)
+  "Create a model entry from MODEL-URL and CONFIG-URL."
+  (let* ((info (piper--parse-model-info model-url))
+         (lang-code (plist-get info :lang-code))
+         (voice (plist-get info :voice))
+         (quality (plist-get info :quality)))
+    (piper-model-create
+     :name (format "%s - %s (%s)" voice quality lang-code)
+     :model-url model-url
+     :config-url config-url
+     :lang-name lang-code
+     :lang-code lang-code
+     :voice voice
+     :quality quality)))
+
+(defun piper--test-line-match (pattern line)
+  "Test if PATTERN matches LINE and show match groups."
+  (with-temp-buffer
+    (insert line)
+    (goto-char (point-min))
+    (when (looking-at pattern)
+      (let ((matches nil)
+            (i 0))
+        (while (<= i (/ (length (match-data)) 2))
+          (when (match-string i)
+            (push (cons i (match-string i)) matches))
+          (setq i (1+ i)))
+        (piper--log "Pattern matched: %S" (nreverse matches))
+        t))))
+
+(defun piper--line-indentation ()
+  "Get the indentation level of the current line."
+  (save-excursion
+    (back-to-indentation)
+    (- (point) (line-beginning-position))))
+
+(defun piper--extract-model-name (url)
+  "Extract model name from URL."
+  (when (string-match "/\\([^/]+\\)\.onnx" url)
+    (match-string 1 url)))
+
+(defun piper--parse-models-file ()
+  "Parse the models file to find .onnx files and their configs."
+  (let (models)
+    (goto-char (point-min))
+    (while (not (eobp))
+      (let ((line (buffer-substring-no-properties 
+                   (line-beginning-position) 
+                   (line-end-position))))
+        ;; Look for .onnx URLs
+        (when (string-match "huggingface\.co/[^)]+\.onnx" line)
+          (let* ((model-url (match-string 0 line))
+                 (full-model-url (concat "https://" model-url "?download=true"))
+                 (config-url (concat "https://" model-url ".json?download=true"))
+                 (model-name (piper--extract-model-name full-model-url)))
+            (when model-name
+              (piper--log "Found model: %s" model-name)
+              (push (list model-name full-model-url config-url) models))))
+        (forward-line)))
+    
+    (if models
+        (let ((sorted-models (sort (nreverse models)
+                                  (lambda (a b)
+                                    (string< (car a) (car b))))))
+          (piper--log "Found %d models" (length sorted-models))
+          sorted-models)
+      (error "No models found in the file"))))
+
+(defun piper--find-models-in-buffer ()
+  "Find all model/config pairs in current buffer."
+  (let ((raw-models (piper--parse-models-file))
+        models)
+    (dolist (model-info raw-models)
+      (let* ((name (nth 0 model-info))
+             (model-url (nth 1 model-info))
+             (config-url (nth 2 model-info))
+             ;; Extract language and voice from model name
+             (parts (split-string name "-"))
+             (lang-code (concat (nth 0 parts) "_" (nth 1 parts)))
+             (voice (nth 2 parts))
+             (quality (nth 3 parts)))
+        (push (piper-model-create
+               :name (format "%s - %s (%s)" voice quality lang-code)
+               :model-url model-url
+               :config-url config-url
+               :voice voice
+               :quality quality
+               :lang-name lang-code
+               :lang-code lang-code)
+              models)))
+    (if models
+        (progn
+          (piper--log "Successfully parsed %d models" (length models))
+          (nreverse models))
+      (error "No models found in the file"))))
 
 (defun piper--fetch-available-models ()
   "Fetch and parse available models from piper-models-url."
-  (with-temp-buffer
-    (url-insert-file-contents piper-models-url)
-    (let ((models nil))
-      ;; Parse each language section
-      (while (re-search-forward "^\\* \\([^(]+\\)(\\(?:`\\)?\\([^)`]+\\)\\(?:`\\)?\\)" nil t)
-        (let ((lang-name (match-string 1))
-              (lang-code (string-trim (match-string 2))))
-          (save-excursion
-            ;; Parse each voice in the language
-            (while (and (forward-line 1)
-                       (looking-at "^\\s-+\\* \\([^\n]+\\)"))
-              (let ((voice (string-trim (match-string 1))))
-                (save-excursion
-                  ;; Parse each quality level for the voice
-                  (while (and (forward-line 1)
-                             (looking-at "^\\s-+\\* .*\\[model\\]")
-                             (not (looking-at "^\\s-+\\* [^-]+$")))
-                    (when-let ((model (piper--parse-model-line
-                                      (buffer-substring (line-beginning-position)
-                                                      (line-end-position))
-                                      voice lang-name lang-code)))
-                      (push model models)))))))))
-      (setq piper--available-models (nreverse models))))
-  piper--available-models)
+  (let ((temp-file (make-temp-file "piper-models"))
+        (models nil))
+    (unwind-protect
+        (progn
+          (piper--log "Starting model fetch from %s" piper-models-url)
+          (let ((curl-status (shell-command
+                            (format "curl -s -f -L -o %s %s"
+                                    (shell-quote-argument temp-file)
+                                    (shell-quote-argument piper-models-url)))))
+            (if (not (eq curl-status 0))
+                (error "Failed to download models file")
+              (piper--log "Fetching models from %s" piper-models-url)
+              (with-temp-buffer
+                (insert-file-contents temp-file)
+                (let ((content (buffer-string)))
+                  (piper--log "File size: %d bytes" (length content))
+                  (piper--log "First 500 chars: %s" (substring content 0 (min 500 (length content))))
+                  (setq models (piper--find-models-in-buffer))
+                  (if (null models)
+                      (error "No models found in the file")
+                    (progn
+                      (piper--log "Setting piper--available-models to %d models" (length models))
+                      (setq piper--available-models models)
+                      (piper--log "First model: %S" (car models))
+                      (piper--log "Total models now available: %d" (length piper--available-models))
+                      piper--available-models))))))
+      (when (file-exists-p temp-file)
+        (piper--log "Cleaned up temp file %s" temp-file)
+        (delete-file temp-file))))))
 
 (defun piper--handle-download (output-file reporter callback)
   "Handle download to OUTPUT-FILE, update REPORTER, and call CALLBACK when done."
@@ -216,7 +357,7 @@ If nil, will prompt to select a model using `piper-select-model'."
                              (mapcar #'car model-choices)
                              nil t))
          (selected-model (cdr (assoc selected-model-name model-choices)))
-         (model-url (piper-model-url selected-model))
+         (model-url (piper-model-model-url selected-model))
          (clean-url (piper--clean-url model-url))
          (model-file (expand-file-name
                      (file-name-nondirectory clean-url)
@@ -364,6 +505,7 @@ If NO-BLOCK is non-nil, run asynchronously."
       (piper--verify-installation)
       (setq piper--setup-done t))))
 
+
 (defun piper--verify-installation ()
   "Verify that all required Piper components are installed and accessible."
   (let* ((install-dir (piper--get-install-dir))
@@ -446,7 +588,7 @@ Calls CALLBACK with the process status when done."
     (with-current-buffer process-buffer
       (erase-buffer))
     
-    (condition-case err
+    (condition-case nil
         (progn
           (piper--log "Starting Piper process...")
           (piper--log "  Text: %s" input-text)
@@ -493,7 +635,7 @@ Calls CALLBACK with the process status when done."
                              (delete-process process)
                              (funcall callback 1)))))
       
-      (error
+      (error (err)
        (piper--log "Failed to start process: %s" (error-message-string err))
        (funcall callback 1)))))
 
