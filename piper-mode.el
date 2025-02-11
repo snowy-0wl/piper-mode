@@ -106,9 +106,9 @@ If nil, will prompt to select a model using `piper-select-model'."
     (url-insert-file-contents piper-models-url)
     (let ((models nil))
       ;; Parse each language section
-      (while (re-search-forward "^\\* \\([^(]+\\)(\\(`[^`]+`\\)" nil t)
+      (while (re-search-forward "^\\* \\([^(]+\\)(\\(?:`\\)?\\([^)`]+\\)\\(?:`\\)?\\)" nil t)
         (let ((lang-name (match-string 1))
-              (lang-code (match-string 2)))
+              (lang-code (string-trim (match-string 2))))
           (save-excursion
             ;; Parse each voice in the language
             (while (and (forward-line 1)
