@@ -1,7 +1,7 @@
 ;; -*- no-byte-compile: t -*-
 (define-package "piper-mode" "0.5"
   "Text-to-speech using Piper TTS"
-  '((emacs "27.1") (json "1.4"))
+  '((emacs "27.1") (json "1.4") (cl-lib "0.5"))
   :authors '(("snowy-0wl"))
   :maintainer '("snowy-0wl")
   :keywords '("multimedia" "tts" "accessibility" "speech")

@@ -21,6 +21,7 @@ Text-to-speech for Emacs using the [Piper TTS](https://github.com/rhasspy/piper)
   - `M-x piper-speak-word` - Speak the current word
   - `M-x piper-speak-to-end` - Speak from point to end of buffer
   - `M-x piper-stop` - Stop speaking and clean up
+  - `M-x piper-select-model` - Select and download a different voice model
 - Automatic setup and installation of dependencies
 - Support for custom voice models
 - Debug logging for troubleshooting
@@ -84,9 +85,23 @@ The package provides several customization options:
 ;; Use a different voice model
 (setq piper-voice-model "/path/to/custom/model.onnx")
 
+;; Change the URL for fetching available models
+(setq piper-models-url "https://raw.githubusercontent.com/rhasspy/piper/master/VOICES.md")
+
 ;; Adjust process timeout (default: 30 seconds)
 (setq piper-process-timeout 60)
 ```
+
+### Voice Model Selection
+
+Piper-mode supports multiple voice models in different languages. To change the voice model:
+
+1. Use `M-x piper-select-model` to open the model selection interface
+2. Type to filter available models (e.g., "russian" or "dmitri")
+3. Select the desired model
+4. The model will be automatically downloaded if not present
+
+The default model (en_US-joe-medium) will be used until you select a different one. Your model selection persists across Emacs sessions.
 
 ## First-Time Setup
 

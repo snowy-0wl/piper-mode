@@ -600,6 +600,5 @@ chmod +x "$BIN_DIR/run-piper.sh"
 # Cleanup temporary directories
 log_message "INFO" "Cleaning up temporary directories..."
 manage_temp_dirs "cleanup" "$TEMP_DIR"
-manage_temp_dirs "cleanup" "$BUILD_DIR"
 manage_temp_dirs "cleanup" "$ESPEAK_BUILD_DIR"
 manage_temp_dirs "cleanup" "$PIPER_BUILD_DIR"
