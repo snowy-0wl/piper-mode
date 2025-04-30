@@ -186,8 +186,8 @@ Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invali
   (let (models)
     (goto-char (point-min))
     (while (not (eobp))
-      (let ((line (buffer-substring-no-properties 
-                   (line-beginning-position) 
+      (let ((line (buffer-substring-no-properties
+                   (line-beginning-position)
                    (line-end-position))))
         ;; Look for .onnx URLs
         (when (string-match "huggingface\.co/[^)]+\.onnx" line)
@@ -199,7 +199,7 @@ Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invali
               (piper--log "Found model: %s" model-name)
               (push (list model-name full-model-url config-url) models))))
         (forward-line)))
-    
+
     (if models
         (let ((sorted-models (sort (nreverse models)
                                   (lambda (a b)
@@ -290,7 +290,7 @@ Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invali
         (progn
           (piper--log "Starting download of %s to %s" model-url output-file)
           (piper--log "Clean output file: %s" clean-output-file)
-          
+
           ;; Download model file
           (let ((result (call-process "curl" nil temp-buffer nil
                                      "-L" "-f" "-o" clean-output-file
@@ -329,7 +329,7 @@ Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invali
   (unless piper--available-models
     (message "Fetching available models...")
     (piper--fetch-available-models))
-  
+
   ;; Group models by language
   (let* ((langs (delete-dups
                  (mapcar (lambda (m) (cons (piper-model-lang-name m)
@@ -362,12 +362,12 @@ Returns plist with :lang :lang-code :voice :quality :model-url, or nil if invali
          (model-file (expand-file-name
                      (file-name-nondirectory clean-url)
                      (expand-file-name "models" (piper--get-install-dir)))))
-    
+
     ;; Download if needed
     (unless (file-exists-p model-file)
       (message "Downloading model %s..." (piper-model-name selected-model))
       (piper--download-model model-url model-file))
-    
+
     (setq piper-voice-model model-file)
     (message "Switched to model: %s (%s)"
              selected-model-name
@@ -432,11 +432,11 @@ This is either the custom directory set in `piper-install-dir', or derived from 
                       install-dir))
          (setup-script (expand-file-name "setup-piper.sh" source-dir))
          (run-script (piper--get-script-path)))
-    
+
     (piper--log "Source dir: %s" source-dir)
     (piper--log "Setup script: %s" setup-script)
     (piper--log "Install dir: %s" install-dir)
-    
+
     (unless (and (file-exists-p run-script)
                  (file-executable-p run-script))
       (error "Piper script not found or not executable at %s" run-script))))
@@ -451,7 +451,7 @@ If NO-BLOCK is non-nil, run asynchronously."
                                     (list (format "PIPER_NO_BLOCK=%s" (if no-block "1" ""))))))
     (piper--log "Running TTS with script: %s" script-path)
     (piper--log "Output WAV: %s" temp-wav)
-    
+
     (with-temp-buffer
       (insert text)
       (let ((exit-code (call-process-region (point-min) (point-max)
@@ -485,7 +485,7 @@ If NO-BLOCK is non-nil, run asynchronously."
            (install-dir (piper--get-install-dir))
            (bin-dir (expand-file-name "bin" install-dir))
            (piper-bin (expand-file-name "piper" bin-dir)))
-      
+
       ;; Only run setup if the installation is not already valid
       (when (and piper-auto-setup
                  (file-exists-p setup-script)
@@ -500,7 +500,7 @@ If NO-BLOCK is non-nil, run asynchronously."
           (let ((result (call-process "bash" nil "*piper-setup*" t setup-script install-dir)))
             (message "Setup script exited with code %d" result)))
         (message "Piper TTS setup complete!"))
-      
+
       ;; Verify installation once and set setup-done flag
       (piper--verify-installation)
       (setq piper--setup-done t))))
@@ -516,7 +516,7 @@ If NO-BLOCK is non-nil, run asynchronously."
          (onnx-lib (expand-file-name "libonnxruntime.1.14.1.dylib" bin-dir))
          (espeak-lib (expand-file-name "libespeak-ng.1.dylib" bin-dir))
          (piper-lib (expand-file-name "libpiper_phonemize.1.dylib" bin-dir)))
-    
+
     (piper--log "Verifying Piper installation:")
     (piper--log "  Install dir: %s" install-dir)
     (piper--log "  Piper binary: %s (exists: %s)" piper-bin (file-exists-p piper-bin))
@@ -525,7 +525,7 @@ If NO-BLOCK is non-nil, run asynchronously."
     (piper--log "  ONNX lib: %s (exists: %s)" onnx-lib (file-exists-p onnx-lib))
     (piper--log "  Espeak lib: %s (exists: %s)" espeak-lib (file-exists-p espeak-lib))
     (piper--log "  Piper lib: %s (exists: %s)" piper-lib (file-exists-p piper-lib))
-    
+
     (unless (file-exists-p piper-bin)
       (error "Piper binary not found at %s" piper-bin))
     (unless (file-exists-p run-script)
@@ -583,11 +583,11 @@ Calls CALLBACK with the process status when done."
          ;; Convert model path to be relative to install directory
          (relative-model-file (file-relative-name model-file default-directory))
          (process))
-    
+
     ;; Clear the process buffer
     (with-current-buffer process-buffer
       (erase-buffer))
-    
+
     (condition-case nil
         (progn
           (piper--log "Starting Piper process...")
@@ -597,13 +597,13 @@ Calls CALLBACK with the process status when done."
           (piper--log "  Relative model: %s" relative-model-file)
           (piper--log "  Script: %s" run-script)
           (piper--log "  Directory: %s" default-directory)
-          
+
           ;; Verify files exist
           (unless (file-exists-p run-script)
             (error "Run script not found: %s" run-script))
           (unless (file-exists-p model-file)
             (error "Model file not found: %s" model-file))
-          
+
           ;; Start the process
           (setq process
                 (make-process
@@ -614,7 +614,7 @@ Calls CALLBACK with the process status when done."
                               "--output_file" output-file)
                  :sentinel (lambda (proc event)
                            (piper--log "Process event: %s" (string-trim event))
-                           (piper--log "Process output:\n%s" 
+                           (piper--log "Process output:\n%s"
                                      (with-current-buffer (process-buffer proc)
                                        (buffer-string)))
                            (piper--log "Process exit status: %d" (process-exit-status proc))
@@ -622,11 +622,11 @@ Calls CALLBACK with the process status when done."
                  :filter (lambda (proc output)
                           (piper--log "Process output: %s" output))
                  :stderr process-buffer))
-          
+
           ;; Send input text to process stdin
           (process-send-string process (concat input-text "\n"))
           (process-send-eof process)
-          
+
           ;; Set process timeout
           (run-with-timer piper-process-timeout nil
                          (lambda ()
@@ -634,19 +634,20 @@ Calls CALLBACK with the process status when done."
                              (piper--log "Process timeout reached")
                              (delete-process process)
                              (funcall callback 1)))))
-      
+
       (error (err)
        (piper--log "Failed to start process: %s" (error-message-string err))
        (funcall callback 1)))))
 
-(defun piper--play-wav-file (file-path)
+(defun piper--play-wav-file (file-path &optional callback)
   "Play the WAV file at FILE-PATH using afplay."
   (piper--log "Playing WAV file: %s" file-path)
   (make-process
    :name "piper-play"
    :command (list "afplay" file-path)
    :sentinel (lambda (proc event)
-               (piper--log "Play process event: %s" event))))
+               (piper--log "Play process event: %s" event)
+	       (when callback (funcall callback (process-exit-status proc))))))
 
 (defun piper--cleanup ()
   "Clean up all resources."
@@ -694,7 +695,7 @@ Calls CALLBACK with the process status when done."
           (progn
             (setq piper--play-process
                   (start-process "piper-play" "*piper-play*" "afplay" wav-file))
-            (set-process-sentinel 
+            (set-process-sentinel
              piper--play-process
              (lambda (proc event)
                (piper--log "Audio playback process ended with: %s" event)
@@ -706,7 +707,7 @@ Calls CALLBACK with the process status when done."
 
 ;; Main interface functions
 ;;;###autoload
-(defun piper-speak (text)
+(defun piper-speak (text &optional callback)
   "Convert TEXT to speech using Piper TTS."
   (interactive "sText: ")
   (piper--log "Speaking text: %s" text)
@@ -719,11 +720,22 @@ Calls CALLBACK with the process status when done."
                             (if (eq status 0)
                                 (progn
                                   (piper--log "Playing WAV file: %s" wav-file)
-                                  (piper--play-wav-file wav-file))
+                                  (piper--play-wav-file wav-file callback))
                               (progn
                                 (piper--log "Failed to generate speech, cleaning up")
                                 (piper--cleanup-temp-wav wav-file)
-                                (message "Failed to generate speech: %s" status)))))))
+                                (message "Failed to generate speech: %s" status)
+				(when callback (funcall callback status))))))))
+
+;;;###autoload
+(defun piper-speak-text-list (text-list)
+  "Convert TEXT-LIST sequentially to speech using Piper TTS."
+  (when text-list
+    (let ((text (car text-list)))
+      (piper-speak text
+		   (lambda (status)
+		     (when (eq status 0)
+		       (piper-speak-text-list (cdr text-list))))))))
 
 ;;;###autoload
 (defun piper-speak-region (start end)
@@ -732,14 +744,14 @@ Calls CALLBACK with the process status when done."
   (piper--log "Speaking region from %d to %d" start end)
   (piper--ensure-script)
   (piper--cleanup)
-  
+
   (let* ((text (buffer-substring-no-properties start end))
-         (clean-text (replace-regexp-in-string "[\\\"']" "" 
-                      (replace-regexp-in-string "\\s-+" " " text)))
+         (clean-text (replace-regexp-in-string "[\\\"']" ""
+					       (replace-regexp-in-string "\\s-+" " " text)))
          (wav-file (piper--create-temp-wav)))
     (piper--log "Speaking text: %s" clean-text)
     (piper--log "Using wav file: %s" wav-file)
-    
+
     (piper--start-process clean-text wav-file piper-voice-model
                           (lambda (status)
                             (if (eq status 0)
