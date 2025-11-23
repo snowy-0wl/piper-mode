@@ -1,5 +1,5 @@
 ;; -*- no-byte-compile: t -*-
-(define-package "piper-mode" "0.5"
+(define-package "piper-mode" "0.6.0"
   "Text-to-speech using Piper TTS"
   '((emacs "27.1") (json "1.4") (cl-lib "0.5"))
   :authors '(("snowy-0wl"))

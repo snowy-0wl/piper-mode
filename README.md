@@ -5,6 +5,7 @@ Text-to-speech for Emacs using the [Piper TTS](https://github.com/rhasspy/piper)
 ## Features
 
 - **High-Quality Voices**: Uses Piper's neural TTS engine for natural speech.
+- **Dynamic Model Selection**: Browses and downloads voices directly from the official repository with proper language names and quality indicators.
 - **Automated Setup**: Automatically downloads pre-built binaries for Linux and Intel macOS.
 - **Apple Silicon Support**: Automatically compiles from source on M1/M2 Macs (official binaries are incompatible).
 - **Persistent Storage**: Binaries and models are stored in `~/.emacs.d/piper-tts/` to survive package rebuilds.
