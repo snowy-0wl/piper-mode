@@ -27,6 +27,9 @@
 (defvar piper--current-text nil
   "Text currently being spoken.")
 
+(defvar piper--active-timers nil
+  "List of active timers for cleanup.")
+
 (defun piper--start-process (input-text output-file model-file callback)
   "Start the Piper TTS process to convert INPUT-TEXT to speech.
 Uses MODEL-FILE to generate audio in OUTPUT-FILE.
@@ -75,6 +78,11 @@ Calls CALLBACK with the process status when done."
                            (piper--log "Process output:\n%s" 
                                     (with-current-buffer (process-buffer proc)
                                       (buffer-string)))
+                           ;; Cancel timeout timer to prevent double-callback
+                           (let ((timer (plist-get (process-plist proc) :timeout-timer)))
+                             (when timer
+                               (cancel-timer timer)
+                               (setq piper--active-timers (delq timer piper--active-timers))))
                            (when (string-match-p "finished" event)
                              (funcall callback (process-exit-status proc))))))
           
@@ -85,13 +93,16 @@ Calls CALLBACK with the process status when done."
           (process-send-string process (concat input-text "\n"))
           (process-send-eof process)
           
-          ;; Set process timeout
-          (run-with-timer piper-process-timeout nil
-                         (lambda ()
-                           (when (process-live-p process)
-                             (piper--log "Process timeout reached")
-                             (delete-process process)
-                             (funcall callback 1)))))
+          ;; Set process timeout and track it
+          (let ((timeout-timer
+                 (run-with-timer piper-process-timeout nil
+                                (lambda ()
+                                  (when (process-live-p process)
+                                    (piper--log "Process timeout reached")
+                                    (delete-process process)
+                                    (funcall callback 1))))))
+            (push timeout-timer piper--active-timers)
+            (set-process-plist process (list :timeout-timer timeout-timer))))
       
       (error
        (piper--log "Failed to start process: %s" (error-message-string err))
@@ -302,6 +313,8 @@ Starts the generation loop."
     (piper--log "Batch highlight: %s-%s" start-pos end-pos)
     (piper--log "Batch command: %s" sox-concat-cmd)
     
+    (setq piper--current-batch wav-files)
+    
     (setq piper--play-process
           (make-process
            :name "piper-batch-play"
@@ -310,26 +323,34 @@ Starts the generation loop."
            :sentinel (lambda (proc event)
                       (piper--log "Batch play event: %s" (string-trim event))
                       (when (string-match-p "\\(finished\\|exited\\)" event)
-                        ;; Cleanup WAV files
-                        (dolist (wav-file wav-files)
-                          (piper--cleanup-temp-wav wav-file))
-                        
-                        (setq piper--play-process nil)
-                        
-                        (if (or piper--paused (not piper--chunk-processing))
-                            (piper--log "Playback paused or stopped, not continuing")
-                          (progn
-                            ;; Trigger next batch
-                            (piper--play-next-chunk)
-                            ;; Trigger generation
-                            (piper--generate-next-chunk)
-                            
-                            ;; Check if done
-                            (when (and (null piper--chunk-queue)
-                                       (null piper--audio-queue)
-                                       (not (process-live-p piper--current-process)))
-                              (piper--log "All chunks processed")
-                              (piper--cleanup))))))))))
+                        (let ((exit-status (process-exit-status proc)))
+                          ;; Cleanup WAV files
+                          (dolist (wav-file wav-files)
+                            (piper--cleanup-temp-wav wav-file))
+                          
+                          (setq piper--current-batch nil)
+                          (setq piper--play-process nil)
+                          
+                          ;; Check if sox failed
+                          (if (not (= exit-status 0))
+                              (progn
+                                (piper--log "Sox/play failed with exit code %d" exit-status)
+                                (message "Piper: Audio playback failed"))
+                            ;; Success - continue processing
+                            (if (or piper--paused (not piper--chunk-processing))
+                                (piper--log "Playback paused or stopped, not continuing")
+                              (progn
+                                ;; Trigger next batch
+                                (piper--play-next-chunk)
+                                ;; Trigger generation
+                                (piper--generate-next-chunk)
+                                
+                                ;; Check if done
+                                (when (and (null piper--chunk-queue)
+                                           (null piper--audio-queue)
+                                           (not (process-live-p piper--current-process)))
+                                  (piper--log "All chunks processed")
+                                  (piper--cleanup))))))))))))
 
 (defun piper-pause ()
   "Pause playback."
@@ -378,6 +399,17 @@ Starts the generation loop."
     (let ((wav-file (if (listp chunk-data) (car chunk-data) chunk-data)))
       (piper--cleanup-temp-wav wav-file)))
   (setq piper--audio-queue nil)
+
+  (when piper--current-batch
+    (dolist (wav-file piper--current-batch)
+      (piper--cleanup-temp-wav wav-file))
+    (setq piper--current-batch nil))
+
+  ;; Cancel all active timers
+  (dolist (timer piper--active-timers)
+    (when timer
+      (cancel-timer timer)))
+  (setq piper--active-timers nil)
 
   (setq piper--current-text nil)
   (setq piper--chunk-queue nil)
