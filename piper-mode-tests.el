@@ -68,8 +68,13 @@
   "Test existence of core functions and absence of removed ones."
   (should (fboundp 'piper-speak))
   (should (fboundp 'piper-stop))
-  ;; Highlighting functions should be gone
-  (should-not (fboundp 'piper-test-highlight))
-  (should-not (boundp 'piper-highlight-face)))
+  ;; Highlighting functions should exist now
+  (should (facep 'piper-highlight-face)))
+
+(ert-deftest piper-mode-test-shell-quoting ()
+  "Test that file paths are properly quoted."
+  (let ((wav-files '("file1.wav" "file with spaces.wav" "file'with'quotes.wav")))
+    (should (string= (mapconcat #'shell-quote-argument wav-files " ")
+                     "file1.wav file\\ with\\ spaces.wav file\\'with\\'quotes.wav"))))
 
 (provide 'piper-mode-tests)

@@ -168,8 +168,7 @@ Calls CALLBACK with the process status when done."
 (defvar piper--current-batch nil
   "List of (wav-file start-pos end-pos) for current batch.")
 
-(defvar piper--play-process nil
-  "The current play process.")
+
 
 (defvar piper--paused nil
   "Whether playback is paused.")
@@ -195,8 +194,7 @@ Each element is a list (wav-file start-pos end-pos).")
 (defconst piper--max-audio-queue-size 5
   "Maximum number of audio chunks to buffer ahead.")
 
-(defvar piper--paused nil
-  "Whether playback is currently paused.")
+
 
 (defvar piper--current-wav-file nil
   "The WAV file currently being played.")
@@ -306,14 +304,14 @@ Starts the generation loop."
          (last-chunk (car (last batch)))
          (end-pos (nth 2 last-chunk))
          (sox-concat-cmd (format "sox %s -t wav - | play -t wav -"
-                                (mapconcat (lambda (f) (format "'%s'" f))
+                                (mapconcat #'shell-quote-argument
                                           wav-files " "))))
     
     (piper--update-highlight start-pos end-pos)
     (piper--log "Batch highlight: %s-%s" start-pos end-pos)
     (piper--log "Batch command: %s" sox-concat-cmd)
     
-    (setq piper--current-batch wav-files)
+    (setq piper--current-batch batch)
     
     (setq piper--play-process
           (make-process
@@ -324,33 +322,39 @@ Starts the generation loop."
                       (piper--log "Batch play event: %s" (string-trim event))
                       (when (string-match-p "\\(finished\\|exited\\)" event)
                         (let ((exit-status (process-exit-status proc)))
-                          ;; Cleanup WAV files
-                          (dolist (wav-file wav-files)
-                            (piper--cleanup-temp-wav wav-file))
                           
-                          (setq piper--current-batch nil)
-                          (setq piper--play-process nil)
-                          
-                          ;; Check if sox failed
-                          (if (not (= exit-status 0))
+                          (if piper--paused
                               (progn
-                                (piper--log "Sox/play failed with exit code %d" exit-status)
-                                (message "Piper: Audio playback failed"))
-                            ;; Success - continue processing
-                            (if (or piper--paused (not piper--chunk-processing))
-                                (piper--log "Playback paused or stopped, not continuing")
-                              (progn
-                                ;; Trigger next batch
-                                (piper--play-next-chunk)
-                                ;; Trigger generation
-                                (piper--generate-next-chunk)
-                                
-                                ;; Check if done
-                                (when (and (null piper--chunk-queue)
-                                           (null piper--audio-queue)
-                                           (not (process-live-p piper--current-process)))
-                                  (piper--log "All chunks processed")
-                                  (piper--cleanup))))))))))))
+                                (piper--log "Playback paused, preserving batch")
+                                (setq piper--play-process nil))
+                            
+                            ;; Normal cleanup
+                            (dolist (wav-file wav-files)
+                              (piper--cleanup-temp-wav wav-file))
+                            
+                            (setq piper--current-batch nil)
+                            (setq piper--play-process nil)
+                            
+                            ;; Check if sox failed
+                            (if (not (= exit-status 0))
+                                (progn
+                                  (piper--log "Sox/play failed with exit code %d" exit-status)
+                                  (message "Piper: Audio playback failed"))
+                              ;; Success - continue processing
+                              (if (not piper--chunk-processing)
+                                  (piper--log "Playback stopped, not continuing")
+                                (progn
+                                  ;; Trigger next batch
+                                  (piper--play-next-chunk)
+                                  ;; Trigger generation
+                                  (piper--generate-next-chunk)
+                                  
+                                  ;; Check if done
+                                  (when (and (null piper--chunk-queue)
+                                             (null piper--audio-queue)
+                                             (not (process-live-p piper--current-process)))
+                                    (piper--log "All chunks processed")
+                                    (piper--cleanup)))))))))))))
 
 (defun piper-pause ()
   "Pause playback."
@@ -367,7 +371,11 @@ Starts the generation loop."
   (piper--log "Resuming playback")
   (when piper--paused
     (setq piper--paused nil)
-    (piper--play-next-chunk)))
+    (if piper--current-batch
+        (let ((wav-files (mapcar 'car piper--current-batch)))
+          (piper--log "Resuming current batch")
+          (piper--play-batch piper--current-batch wav-files))
+      (piper--play-next-chunk))))
 
 (defun piper-toggle-pause ()
   "Toggle pause/resume."
@@ -401,8 +409,9 @@ Starts the generation loop."
   (setq piper--audio-queue nil)
 
   (when piper--current-batch
-    (dolist (wav-file piper--current-batch)
-      (piper--cleanup-temp-wav wav-file))
+    (dolist (chunk piper--current-batch)
+      (let ((wav-file (car chunk)))
+        (piper--cleanup-temp-wav wav-file)))
     (setq piper--current-batch nil))
 
   ;; Cancel all active timers

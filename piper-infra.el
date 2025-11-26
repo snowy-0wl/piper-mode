@@ -124,7 +124,7 @@ Only runs if we are using the default installation directory within straight."
          (bin-dir (expand-file-name "bin" install-dir))
          (piper-bin (expand-file-name "piper" bin-dir))
          (run-script (piper--get-script-path))
-         (onnx-lib (expand-file-name "libonnxruntime.1.14.1.dylib" bin-dir)))
+         (onnx-lib (car (directory-files bin-dir t "libonnxruntime.*\\.dylib$"))))
     
     (piper--log "Verifying Piper installation:")
     (piper--log "  Install dir: %s" install-dir)
