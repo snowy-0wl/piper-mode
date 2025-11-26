@@ -18,14 +18,23 @@ Text-to-speech for Emacs using the [Piper TTS](https://github.com/rhasspy/piper)
   - `M-x piper-speak-word` - Speak the current word
   - `M-x piper-speak-to-end` - Speak from point to end of buffer
   - `M-x piper-stop` - Stop speaking
+  - `M-x piper-pause` - Pause playback
+  - `M-x piper-resume` - Resume playback
+  - `M-x piper-toggle-pause` - Toggle pause/resume
   - `M-x piper-select-model` - Select and download a different voice model
   - `M-x piper-describe-model` - View detailed information about current or any voice model
   - `M-x piper-update` - Force update of binaries (rebuilds on Apple Silicon, re-downloads on Intel/Linux)
+- **Playback Features**:
+  - Pause and resume support
+  - Text highlighting synchronized with playback
+  - Gapless playback using batch concatenation (requires sox)
+  - Smart text chunking at sentence boundaries
 
 ## System Requirements
 
 - macOS (Apple Silicon or Intel) or Linux (x86_64, ARM64, ARMv7)
 - `curl` and `tar` (usually pre-installed)
+- `sox` (for gapless playback - install with `brew install sox` on macOS)
 - Emacs 27.1 or later
 
 ## Installation
@@ -90,6 +99,9 @@ The package works out of the box, but you can customize it:
 ;;   "en_GB-alan-medium.onnx"     - British English, male
 ;; The model file will be auto-downloaded to ~/.emacs.d/piper-tts/models/
 (setq piper-voice-model "en_US-joe-medium.onnx")
+
+;; Customize highlight face (optional)
+;; (set-face-attribute 'piper-highlight-face nil :background "#5F5F5F")
 ```
 
 ### Choosing Voice Models

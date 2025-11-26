@@ -29,12 +29,18 @@
 (require 'piper-models)
 (require 'piper-tts)
 
+(defface piper-highlight-face
+  '((t (:background "#4F4F4F"))) ; Dark gray background, visible on Zenburn
+  "Face used to highlight the currently spoken text chunk."
+  :group 'piper)
+
 ;;;###autoload
-(defun piper-speak (text)
+(defun piper-speak (text &optional start-pos)
   "Speak TEXT using Piper TTS.
+If START-POS is provided, highlight the text in the buffer during playback.
 Large texts are automatically chunked for faster playback startup."
   (interactive "MText to speak: ")
-  (piper--log "Speaking text: %s" text)
+  (piper--log "Speaking text: %s (start-pos: %s)" text start-pos)
   
   ;; Ensure setup is done
   (piper--ensure-setup)
@@ -46,38 +52,28 @@ Large texts are automatically chunked for faster playback startup."
   (setq piper--original-text text)
   
   ;; Check if we need to chunk the text
-  (let ((chunks (piper--chunk-text text)))
-    (if (= (length chunks) 1)
-        ;; Single chunk - process normally
-        (progn
-          (setq piper--current-text text)
-          (let ((wav-file (piper--create-temp-wav)))
-            (piper--start-process text wav-file (piper--expand-model-path piper-voice-model)
-                                 (lambda (status)
-                                   (piper--log "Process completed with status: %s" status)
-                                   (if (eq status 0)
-                                       (progn
-                                         (piper--log "Playing WAV file: %s" wav-file)
-                                         (piper--play-wav-file wav-file))
-                                     (progn
-                                       (piper--log "Failed to generate speech, cleaning up")
-                                       (piper--cleanup-temp-wav wav-file)
-                                       (message "Failed to generate speech: %s" status)))))))
-      
-      ;; Multiple chunks - process sequentially
-      (progn
-        (piper--log "Processing text in %d chunks" (length chunks))
-        
-        ;; Set up chunking variables
-        (setq piper--chunk-queue (cdr chunks))
-        (setq piper--current-chunk-index 0)
-        (setq piper--total-chunks (length chunks))
-        (setq piper--chunk-processing t)
-        
-        ;; Process the first chunk immediately
-        (let ((first-chunk (car chunks)))
-          (setq piper--current-text first-chunk)
-          (piper-speak-chunk first-chunk))))))
+  (let ((raw-chunks (piper--chunk-text text))
+        (processed-chunks nil)
+        (current-pos (or start-pos 0)))
+    
+    ;; Convert raw string chunks into (text start end) tuples
+    (dolist (chunk raw-chunks)
+      (let ((len (length chunk)))
+        (if start-pos
+            (push (list chunk current-pos (+ current-pos len)) processed-chunks)
+          (push (list chunk nil nil) processed-chunks))
+        (setq current-pos (+ current-pos len))))
+    (setq processed-chunks (nreverse processed-chunks))
+
+    ;; Process using the pipeline
+    (piper--log "Processing text in %d chunks" (length processed-chunks))
+    
+    ;; Set up chunking variables
+    (setq piper--chunk-queue processed-chunks)
+    (setq piper--total-chunks (length processed-chunks))
+    
+    ;; Start the pipeline
+    (piper--process-next-chunk)))
 
 ;;;###autoload
 (defun piper-speak-region (start end)
@@ -85,7 +81,7 @@ Large texts are automatically chunked for faster playback startup."
   (interactive "r")
   (piper--log "Speaking region from %d to %d" start end)
   (let ((text (buffer-substring-no-properties start end)))
-    (piper-speak text)))
+    (piper-speak text start)))
 
 ;;;###autoload
 (defun piper-speak-buffer ()
@@ -93,7 +89,7 @@ Large texts are automatically chunked for faster playback startup."
   (interactive)
   (piper--log "Speaking entire buffer")
   (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-    (piper-speak text)))
+    (piper-speak text (point-min))))
 
 ;;;###autoload
 (defun piper-speak-paragraph ()
@@ -104,7 +100,7 @@ Large texts are automatically chunked for faster playback startup."
     (let* ((start (progn (backward-paragraph) (point)))
            (end (progn (forward-paragraph) (point)))
            (text (buffer-substring-no-properties start end)))
-      (piper-speak text))))
+      (piper-speak text start))))
 
 ;;;###autoload
 (defun piper-speak-line ()
@@ -114,7 +110,7 @@ Large texts are automatically chunked for faster playback startup."
   (let* ((line-start (line-beginning-position))
          (line-end (line-end-position))
          (text (buffer-substring-no-properties line-start line-end)))
-    (piper-speak text)))
+    (piper-speak text line-start)))
 
 ;;;###autoload
 (defun piper-speak-word ()
@@ -124,7 +120,7 @@ Large texts are automatically chunked for faster playback startup."
          (start (if bounds (car bounds) (point)))
          (end (if bounds (cdr bounds) (point)))
          (text (buffer-substring-no-properties start end)))
-    (piper-speak text)))
+    (piper-speak text start)))
 
 ;;;###autoload
 (defun piper-stop ()
@@ -141,7 +137,7 @@ Large texts are automatically chunked for faster playback startup."
   (piper--log "Speaking from point to end of buffer")
   (let* ((start (point))
          (text (buffer-substring-no-properties start (point-max))))
-    (piper-speak text)))
+    (piper-speak text start)))
 
 ;;;###autoload
 (define-minor-mode piper-mode

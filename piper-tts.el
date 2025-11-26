@@ -148,84 +148,242 @@ Calls CALLBACK with the process status when done."
     (piper--log "Deleting temp WAV file: %s" wav-file)
     (delete-file wav-file)))
 
+(defvar piper--current-overlay nil
+  "Overlay used to highlight the currently spoken text.")
+
+(defvar piper--batch-size 3
+  "Number of chunks to batch together for playback.")
+
+(defvar piper--current-batch nil
+  "List of (wav-file start-pos end-pos) for current batch.")
+
+(defvar piper--play-process nil
+  "The current play process.")
+
+(defvar piper--paused nil
+  "Whether playback is paused.")
+
+(defun piper--update-highlight (start end)
+  "Update the highlight overlay to cover the range from START to END."
+  (when (and start end)
+    (unless piper--current-overlay
+      (setq piper--current-overlay (make-overlay start end))
+      (overlay-put piper--current-overlay 'face 'piper-highlight-face))
+    (move-overlay piper--current-overlay start end)))
+
+(defun piper--remove-highlight ()
+  "Remove the highlight overlay."
+  (when piper--current-overlay
+    (delete-overlay piper--current-overlay)
+    (setq piper--current-overlay nil)))
+
+(defvar piper--audio-queue nil
+  "Queue of generated WAV files waiting to be played.
+Each element is a list (wav-file start-pos end-pos).")
+
+(defconst piper--max-audio-queue-size 5
+  "Maximum number of audio chunks to buffer ahead.")
+
+(defvar piper--paused nil
+  "Whether playback is currently paused.")
+
+(defvar piper--current-wav-file nil
+  "The WAV file currently being played.")
+
 (defun piper--process-next-chunk ()
-  "Process the next chunk in the queue."
+  "Entry point to start processing chunks.
+Starts the generation loop."
+  (piper--log "Starting chunk processing pipeline")
+  (setq piper--chunk-processing t)
+  (setq piper--paused nil)
+  (setq piper--current-batch nil)
+  (piper--generate-next-chunk))
+
+(defun piper--generate-next-chunk ()
+  "Producer: Generate the next audio chunk if needed."
+  (piper--log "Generator check: queue-size=%d, processing=%s, busy=%s" 
+              (length piper--audio-queue)
+              piper--chunk-processing
+              (if (process-live-p piper--current-process) "yes" "no"))
+
   (when (and piper--chunk-processing
              piper--chunk-queue
+             (< (length piper--audio-queue) piper--max-audio-queue-size)
              (not (process-live-p piper--current-process)))
-    (let ((next-chunk (pop piper--chunk-queue)))
-      (if next-chunk
+    
+    (let* ((next-chunk-data (pop piper--chunk-queue))
+           (text (nth 0 next-chunk-data))
+           (start-pos (nth 1 next-chunk-data))
+           (end-pos (nth 2 next-chunk-data)))
+      
+      (if text
           (progn
             (cl-incf piper--current-chunk-index)
-            (piper--log "Processing chunk %d/%d (length: %d)"
+            (piper--log "Generating chunk %d/%d (length: %d)"
                        piper--current-chunk-index piper--total-chunks
-                       (length next-chunk))
-            (piper-speak-chunk next-chunk))
-        ;; No more chunks, we're done
-        (piper--log "All chunks processed")
-        (setq piper--chunk-processing nil)
-        (piper--cleanup)))))
+                       (length text))
+            
+            (setq piper--current-text text)
+            (let ((wav-file (piper--create-temp-wav)))
+              (piper--start-process 
+               text 
+               wav-file 
+               (piper--expand-model-path piper-voice-model)
+               (lambda (status)
+                 (piper--log "Generation completed with status: %s" status)
+                 (setq piper--current-process nil)
+                 (if (eq status 0)
+                     (progn
+                       ;; Push to audio queue with positions
+                       (setq piper--audio-queue (append piper--audio-queue (list (list wav-file start-pos end-pos))))
+                       (piper--log "Audio queue size: %d" (length piper--audio-queue))
+                       
+                       ;; Trigger playback if not playing
+                       (unless (process-live-p piper--play-process)
+                         (piper--play-next-chunk))
+                       
+                       ;; Try to generate more
+                       (piper--generate-next-chunk))
+                   (progn
+                     (piper--log "Failed to generate chunk")
+                     (piper--cleanup-temp-wav wav-file)
+                     ;; If generation fails, what do we do? Skip? Stop?
+                     ;; For now, try next chunk
+                     (piper--generate-next-chunk)))))))
+        ;; No more chunks to generate
+        (piper--log "No more chunks to generate"))))
+
+(defun piper--play-next-chunk ()
+  "Consumer: Play the next audio chunk batch."
+  (piper--log "Playback check: queue-size=%d, paused=%s, batch-ready=%s" 
+              (length piper--audio-queue)
+              piper--paused
+              (>= (length piper--audio-queue) piper--batch-size))
+
+  (when (and (not (process-live-p piper--play-process))
+             (not piper--paused)
+             (or (>= (length piper--audio-queue) piper--batch-size)
+                 (and piper--audio-queue
+                      (null piper--chunk-queue)
+                      (not (process-live-p piper--current-process)))))
+    ;; Collect batch
+    (let ((batch-size (min piper--batch-size (length piper--audio-queue)))
+          (batch nil)
+          (wav-files nil))
+      
+      (dotimes (_ batch-size)
+        (push (pop piper--audio-queue) batch))
+      (setq batch (nreverse batch))
+      (setq wav-files (mapcar 'car batch))
+      
+      (piper--log "Playing batch of %d chunks" batch-size)
+      (piper--play-batch batch wav-files))))
 
 (defun piper-speak-chunk (text)
-  "Speak a single TEXT chunk without resetting state.
-This is an internal function used by the chunking system."
-  (piper--log "Speaking chunk of length %d" (length text))
-  
-  (setq piper--current-text text)
-  
-  (let ((wav-file (piper--create-temp-wav)))
-    (piper--start-process text wav-file (piper--expand-model-path piper-voice-model)
-                          (lambda (status)
-                            (piper--log "Chunk process completed with status: %s" status)
-                            (if (eq status 0)
-                                (progn
-                                  (piper--log "Playing chunk WAV file: %s" wav-file)
-                                  (piper--play-chunk-wav-file wav-file))
-                              (progn
-                                (piper--log "Failed to generate speech for chunk, cleaning up")
-                                (piper--cleanup-temp-wav wav-file)
-                                (message "Failed to generate speech: %s" status)))))))
+  "Legacy/Direct entry point.
+If called directly, it just plays this one chunk.
+But in the new system, this is mostly bypassed by the pipeline."
+  ;; If we are not in chunk processing mode, just play it directly
+  (unless piper--chunk-processing
+    (let ((wav-file (piper--create-temp-wav)))
+      (piper--start-process text wav-file (piper--expand-model-path piper-voice-model)
+                            (lambda (status)
+                              (if (eq status 0)
+                                  (piper--play-wav-file wav-file)
+                                (piper--cleanup-temp-wav wav-file)))))))
 
-(defun piper--play-chunk-wav-file (file-path)
-  "Play the chunk WAV file at FILE-PATH."
-  (piper--log "Playing chunk WAV file: %s" file-path)
-  
-  ;; Create the process for playback
-  (let ((process-buffer (get-buffer-create "*piper-play*")))
-    ;; Clear the buffer before starting
-    (with-current-buffer process-buffer
-      (erase-buffer))
+(defun piper--play-batch (batch wav-files)
+  "Play a batch of chunks using sox concatenation."
+  (let* ((first-chunk (car batch))
+         (start-pos (nth 1 first-chunk))
+         (last-chunk (car (last batch)))
+         (end-pos (nth 2 last-chunk))
+         (sox-concat-cmd (format "sox %s -t wav - | play -t wav -"
+                                (mapconcat (lambda (f) (format "'%s'" f))
+                                          wav-files " "))))
+    
+    (piper--update-highlight start-pos end-pos)
+    (piper--log "Batch highlight: %s-%s" start-pos end-pos)
+    (piper--log "Batch command: %s" sox-concat-cmd)
     
     (setq piper--play-process
           (make-process
-           :name "piper-play"
-           :buffer process-buffer
-           :command (list "afplay" file-path)
-           :sentinel (lambda (_proc event)
-                      (piper--log "Play process event: %s" event)
+           :name "piper-batch-play"
+           :command (list "sh" "-c" sox-concat-cmd)
+           :buffer (get-buffer-create "*piper-play*")
+           :sentinel (lambda (proc event)
+                      (piper--log "Batch play event: %s" (string-trim event))
                       (when (string-match-p "\\(finished\\|exited\\)" event)
-                        ;; Process next chunk if we're in chunking mode
-                        (when piper--chunk-processing
-                          (piper--process-next-chunk)))))))
-  
-  (piper--log "Started chunk playback process: %s" piper--play-process))
+                        ;; Cleanup WAV files
+                        (dolist (wav-file wav-files)
+                          (piper--cleanup-temp-wav wav-file))
+                        
+                        (setq piper--play-process nil)
+                        
+                        (if piper--paused
+                            (piper--log "Playback paused")
+                          (progn
+                            ;; Trigger next batch
+                            (piper--play-next-chunk)
+                            ;; Trigger generation
+                            (piper--generate-next-chunk)
+                            
+                            ;; Check if done
+                            (when (and (null piper--chunk-queue)
+                                       (null piper--audio-queue)
+                                       (not (process-live-p piper--current-process)))
+                              (piper--log "All chunks processed")
+                              (piper--cleanup)))))))))))
+
+(defun piper-pause ()
+  "Pause playback."
+  (interactive)
+  (piper--log "Pausing playback")
+  (setq piper--paused t)
+  (when piper--play-process
+    (kill-process piper--play-process)
+    (setq piper--play-process nil)))
+
+(defun piper-resume ()
+  "Resume playback."
+  (interactive)
+  (piper--log "Resuming playback")
+  (when piper--paused
+    (setq piper--paused nil)
+    (piper--play-next-chunk)))
+
+(defun piper-toggle-pause ()
+  "Toggle pause/resume."
+  (interactive)
+  (if piper--paused
+      (piper-resume)
+    (piper-pause)))
 
 (defun piper--cleanup ()
   "Clean up all resources."
   (piper--log "Cleaning up resources")
-  (when piper--current-process
-    (when (process-live-p piper--current-process)
-      (piper--log "Killing piper process")
-      (kill-process piper--current-process))
-    (setq piper--current-process nil))
-  (when piper--play-process
-    (when (process-live-p piper--play-process)
-      (piper--log "Killing play process")
-      (kill-process piper--play-process))
-    (setq piper--play-process nil))
+  
+  (piper--remove-highlight)
+  
+  (when (and piper--current-process (process-live-p piper--current-process))
+    (piper--log "Killing piper process")
+    (kill-process piper--current-process))
+  (setq piper--current-process nil)
+  
+  (when (and piper--play-process (process-live-p piper--play-process))
+    (piper--log "Killing play process")
+    (kill-process piper--play-process))
+  (setq piper--play-process nil)
+
+  (dolist (chunk-data piper--audio-queue)
+    (let ((wav-file (if (listp chunk-data) (car chunk-data) chunk-data)))
+      (piper--cleanup-temp-wav wav-file)))
+  (setq piper--audio-queue nil)
+
   (setq piper--current-text nil)
   (setq piper--chunk-queue nil)
   (setq piper--chunk-processing nil)
+  (setq piper--current-batch nil)
   (setq piper--current-chunk-index 0)
   (setq piper--total-chunks 0)
   (setq piper--original-text nil))

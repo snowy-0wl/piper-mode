@@ -189,9 +189,13 @@ if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
     # Copy piper binary
     log_message "INFO" "Copying piper binary..."
     if [ -f "$INSTALL_DIR/bin/piper" ]; then
-        cp "$INSTALL_DIR/bin/piper" "$BIN_DIR/"
+        if [ ! "$INSTALL_DIR/bin/piper" -ef "$BIN_DIR/piper" ]; then
+            cp "$INSTALL_DIR/bin/piper" "$BIN_DIR/"
+            log_message "INFO" "Copied piper from install directory"
+        else
+            log_message "INFO" "piper binary already in bin directory"
+        fi
         chmod +x "$BIN_DIR/piper"
-        log_message "INFO" "Copied piper from install directory"
     elif [ -f "$BUILD_DIR/piper/build/piper" ]; then
         cp "$BUILD_DIR/piper/build/piper" "$BIN_DIR/"
         chmod +x "$BIN_DIR/piper"
