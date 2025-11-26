@@ -102,6 +102,10 @@ The package works out of the box, but you can customize it:
 
 ;; Customize highlight face (optional)
 ;; (set-face-attribute 'piper-highlight-face nil :background "#5F5F5F")
+
+;; Adjust text chunk size (default: 200)
+;; Smaller chunks improve highlighting sync but may affect intonation.
+(setq piper-chunk-size 200)
 ```
 
 ### Choosing Voice Models

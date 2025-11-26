@@ -12,10 +12,12 @@
 (require 'piper-infra)
 
 ;; Internal chunking constants
-;; Internal chunking constants
-(defvar piper--chunk-size 150
-  "Optimal number of characters to process in a single TTS chunk.")
-(setq piper--chunk-size 150) ;; Force update in case it's already defined
+(defcustom piper-chunk-size 200
+  "Optimal number of characters to process in a single TTS chunk.
+Larger chunks provide better context for intonation but increase initial
+latency."
+  :type 'integer
+  :group 'piper)
 
 (defconst piper--chunk-overlap 100
   "Number of characters to overlap between chunks for sentence boundary detection.")
@@ -39,8 +41,8 @@
 (defun piper--chunk-text (text)
   "Split TEXT into manageable chunks for more responsive playback.
 Returns a list of chunks, or a list with just the original text if small enough."
-  (piper--log "Chunking text: length=%d, chunk-size=%d" (length text) piper--chunk-size)
-  (if (<= (length text) piper--chunk-size)
+  (piper--log "Chunking text: length=%d, chunk-size=%d" (length text) piper-chunk-size)
+  (if (<= (length text) piper-chunk-size)
       ;; If text is smaller than chunk size, return the whole text
       (list text)
     (let ((chunks nil)
@@ -48,8 +50,8 @@ Returns a list of chunks, or a list with just the original text if small enough.
           (text-length (length text)))
       
       ;; Process all chunks except the last one
-      (while (< (+ chunk-start piper--chunk-size) text-length)
-        (let* ((chunk-end (+ chunk-start piper--chunk-size))
+      (while (< (+ chunk-start piper-chunk-size) text-length)
+        (let* ((chunk-end (+ chunk-start piper-chunk-size))
                ;; Try to find a good boundary (sentence or paragraph end)
                ;; Must be strictly greater than chunk-start
                (boundary (piper--find-chunk-boundary text chunk-end chunk-start)))
@@ -141,12 +143,36 @@ Prefers to look ahead for the next sentence ending first."
       (when (string-match "\\n\\n" substr)
         (+ start-pos (match-end 0))))))
 
+(defun piper--is-abbreviation-p (text pos)
+  "Check if the period at POS in TEXT is part of an abbreviation."
+  (let ((abbrevs '("Mr" "Mrs" "Ms" "Dr" "Prof" "Sr" "Jr" "St" "vs" "etc" "e.g" "i.e")))
+    (cl-some (lambda (abbr)
+               (let ((abbr-len (length abbr)))
+                 (and (>= pos abbr-len)
+                      (string= (substring text (- pos abbr-len) pos) abbr)
+                      ;; Check word boundary before abbreviation
+                      (or (= (- pos abbr-len) 0)
+                          (string-match-p "\\s-" (substring text (- pos abbr-len 1) (- pos abbr-len)))))))
+             abbrevs)))
+
 (defun piper--find-next-sentence-end (text start-pos end-pos)
-  "Find first sentence end in TEXT between START-POS and END-POS."
-  (let ((substr (substring text start-pos (min (length text) end-pos))))
+  "Find first sentence end in TEXT between START-POS and END-POS.
+Handles common abbreviations to avoid incorrect splits."
+  (let ((substr (substring text start-pos (min (length text) end-pos)))
+        (match-idx 0)
+        (found nil)
+        (result nil))
     (save-match-data
-      (when (string-match "[.!?]\\s-" substr)
-        (+ start-pos (match-end 0))))))
+      (while (and (not found)
+                  (string-match "[.!?]\\s-" substr match-idx))
+        (let ((match-pos (match-end 0))
+              (match-start (match-beginning 0)))
+          ;; Check for abbreviations
+          (if (piper--is-abbreviation-p substr match-start)
+              (setq match-idx match-pos) ;; Skip this match
+            (setq found t
+                  result (+ start-pos match-pos))))))
+    result))
 
 (defun piper--find-paragraph-end (text position min-pos)
   "Find last paragraph end in TEXT between MIN-POS and POSITION."

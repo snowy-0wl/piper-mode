@@ -52,6 +52,9 @@ resulting in a much faster feedback loop during development."
 (defvar piper-temp-dir nil
   "Temporary directory for WAV files.")
 
+(defvar piper-audio-pipe nil
+  "Path to the named pipe for streaming audio.")
+
 (defvar piper--setup-done nil
   "Flag to track if setup has been completed.")
 
@@ -94,7 +97,9 @@ derived from the package location."
     (unless piper-script-path
       (setq piper-script-path (piper--get-script-path)))
     (unless piper-temp-dir
-      (setq piper-temp-dir (piper--get-temp-dir)))))
+      (setq piper-temp-dir (piper--get-temp-dir)))
+    (unless piper-audio-pipe
+      (setq piper-audio-pipe (expand-file-name "piper.pipe" piper-temp-dir)))))
 
 (defun piper--handle-straight-build ()
   "Delete temporary files in straight build directory.
@@ -130,7 +135,9 @@ Only runs if we are using the default installation directory within straight."
     (unless (file-exists-p piper-bin)
       (error "Piper binary not found at %s" piper-bin))
     (unless (file-exists-p run-script)
-      (error "Run script not found at %s" run-script))))
+      (error "Run script not found at %s" run-script))
+    (unless (executable-find "sox")
+      (error "SoX not found. Please install it (e.g., 'brew install sox')"))))
 
 (defun piper--ensure-setup ()
   "Ensure Piper is properly set up by running the setup script if needed."

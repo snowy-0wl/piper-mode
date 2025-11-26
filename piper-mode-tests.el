@@ -19,7 +19,7 @@
 
 (ert-deftest piper-mode-test-chunk-text ()
   "Test text chunking."
-  (let ((piper--chunk-size 10)
+  (let ((piper-chunk-size 10)
         (piper--chunk-overlap 2))
     ;; Short text should not be chunked
     (should (equal (piper--chunk-text "Short") '("Short")))

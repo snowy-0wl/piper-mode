@@ -247,11 +247,10 @@ Starts the generation loop."
                    (progn
                      (piper--log "Failed to generate chunk")
                      (piper--cleanup-temp-wav wav-file)
-                     ;; If generation fails, what do we do? Skip? Stop?
                      ;; For now, try next chunk
                      (piper--generate-next-chunk)))))))
         ;; No more chunks to generate
-        (piper--log "No more chunks to generate"))))
+        (piper--log "No more chunks to generate")))))
 
 (defun piper--play-next-chunk ()
   "Consumer: Play the next audio chunk batch."
@@ -280,10 +279,7 @@ Starts the generation loop."
       (piper--play-batch batch wav-files))))
 
 (defun piper-speak-chunk (text)
-  "Legacy/Direct entry point.
-If called directly, it just plays this one chunk.
-But in the new system, this is mostly bypassed by the pipeline."
-  ;; If we are not in chunk processing mode, just play it directly
+  "Legacy/Direct entry point."
   (unless piper--chunk-processing
     (let ((wav-file (piper--create-temp-wav)))
       (piper--start-process text wav-file (piper--expand-model-path piper-voice-model)
@@ -320,8 +316,8 @@ But in the new system, this is mostly bypassed by the pipeline."
                         
                         (setq piper--play-process nil)
                         
-                        (if piper--paused
-                            (piper--log "Playback paused")
+                        (if (or piper--paused (not piper--chunk-processing))
+                            (piper--log "Playback paused or stopped, not continuing")
                           (progn
                             ;; Trigger next batch
                             (piper--play-next-chunk)
@@ -333,7 +329,7 @@ But in the new system, this is mostly bypassed by the pipeline."
                                        (null piper--audio-queue)
                                        (not (process-live-p piper--current-process)))
                               (piper--log "All chunks processed")
-                              (piper--cleanup)))))))))))
+                              (piper--cleanup))))))))))
 
 (defun piper-pause ()
   "Pause playback."
@@ -363,6 +359,9 @@ But in the new system, this is mostly bypassed by the pipeline."
   "Clean up all resources."
   (piper--log "Cleaning up resources")
   
+  ;; Stop processing flag first to prevent sentinels from restarting things
+  (setq piper--chunk-processing nil)
+  
   (piper--remove-highlight)
   
   (when (and piper--current-process (process-live-p piper--current-process))
@@ -382,7 +381,6 @@ But in the new system, this is mostly bypassed by the pipeline."
 
   (setq piper--current-text nil)
   (setq piper--chunk-queue nil)
-  (setq piper--chunk-processing nil)
   (setq piper--current-batch nil)
   (setq piper--current-chunk-index 0)
   (setq piper--total-chunks 0)
