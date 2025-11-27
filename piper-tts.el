@@ -233,9 +233,10 @@ Starts the generation loop."
                        (length text))
             
             (setq piper--current-text text)
-            (let ((wav-file (piper--create-temp-wav)))
+            (let ((wav-file (piper--create-temp-wav))
+                  (normalized-text (piper--normalize-text text)))
               (piper--start-process 
-               text 
+               normalized-text 
                wav-file 
                (piper--expand-model-path piper-voice-model)
                (lambda (status)
@@ -290,8 +291,9 @@ Starts the generation loop."
 (defun piper-speak-chunk (text)
   "Legacy/Direct entry point."
   (unless piper--chunk-processing
-    (let ((wav-file (piper--create-temp-wav)))
-      (piper--start-process text wav-file (piper--expand-model-path piper-voice-model)
+    (let ((wav-file (piper--create-temp-wav))
+          (normalized-text (piper--normalize-text text)))
+      (piper--start-process normalized-text wav-file (piper--expand-model-path piper-voice-model)
                             (lambda (status)
                               (if (eq status 0)
                                   (piper--play-wav-file wav-file)

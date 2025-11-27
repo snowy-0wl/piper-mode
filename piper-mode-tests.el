@@ -77,4 +77,12 @@
     (should (string= (mapconcat #'shell-quote-argument wav-files " ")
                      "file1.wav file\\ with\\ spaces.wav file\\'with\\'quotes.wav"))))
 
+(ert-deftest piper-test-fix-encoding ()
+  "Test that `piper-fix-encoding` correctly repairs Mojibake."
+  (let ((piper-fix-encoding t))
+    ;; \322 and \323 are Mac Roman " and " interpreted as Latin-1
+    (should (string= (piper--normalize-text "\322Carl\323") "“Carl”"))
+    ;; \324 and \325 are Mac Roman ' and ' interpreted as Latin-1
+    (should (string= (piper--normalize-text "\324Sn\325") "‘Sn’"))))
+
 (provide 'piper-mode-tests)

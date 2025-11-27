@@ -106,6 +106,18 @@ The package works out of the box, but you can customize it:
 ;; Adjust text chunk size (default: 200)
 ;; Smaller chunks improve highlighting sync but may affect intonation.
 (setq piper-chunk-size 200)
+
+;; Text Normalization
+;; Replace specific characters or patterns before speaking.
+;; Useful for removing smart quotes or other characters that sound odd.
+(setq piper-text-replacements
+      '(("[\"“”]" . "")     ; Remove quotes
+        ("['‘’]" . "")))    ; Remove apostrophes/single quotes
+
+;; Fix Encoding Issues (Mojibake)
+;; If you see characters like \322, \323 in the logs (Mac Roman interpreted as Latin-1),
+;; enable this to automatically repair them before normalization.
+(setq piper-fix-encoding t)
 ```
 
 ### Choosing Voice Models

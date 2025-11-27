@@ -11,6 +11,16 @@
 
 (require 'piper-infra)
 
+(defconst piper--chunk-overlap 100
+  "Number of characters to overlap between chunks for sentence boundary detection.")
+
+(defcustom piper-fix-encoding nil
+  "Whether to attempt to fix encoding issues (Mojibake).
+If non-nil, attempts to repair text that looks like Mac Roman interpreted as Latin-1.
+This is useful if you see characters like \\322, \\323, etc. in the logs."
+  :type 'boolean
+  :group 'piper)
+
 ;; Internal chunking constants
 (defcustom piper-chunk-size 200
   "Optimal number of characters to process in a single TTS chunk.
@@ -19,8 +29,15 @@ latency."
   :type 'integer
   :group 'piper)
 
-(defconst piper--chunk-overlap 100
-  "Number of characters to overlap between chunks for sentence boundary detection.")
+(defun piper--normalize-text (text)
+  "Normalize TEXT by repairing encoding issues if enabled."
+  (let ((result text))
+    ;; Optional encoding fix
+    (when piper-fix-encoding
+      (setq result (decode-coding-string 
+                    (encode-coding-string result 'latin-1) 
+                    'mac-roman)))
+    result))
 
 ;; Chunking variables
 (defvar piper--chunk-queue nil
