@@ -354,7 +354,8 @@ Starts the generation loop."
                                   ;; Check if done
                                   (when (and (null piper--chunk-queue)
                                              (null piper--audio-queue)
-                                             (not (process-live-p piper--current-process)))
+                                             (not (process-live-p piper--current-process))
+                                             (not (process-live-p piper--play-process)))
                                     (piper--log "All chunks processed")
                                     (piper--cleanup)))))))))))))
 
