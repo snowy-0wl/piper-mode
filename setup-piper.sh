@@ -124,7 +124,7 @@ if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
         if [ ! -d "espeak-ng" ]; then
             git clone https://github.com/rhasspy/espeak-ng.git
             cd espeak-ng
-            git checkout 2023.9.7-4
+            git checkout master
             cd ..
         fi
         cd espeak-ng
@@ -144,7 +144,7 @@ if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
         if [ ! -d "piper-phonemize" ]; then
             git clone https://github.com/rhasspy/piper-phonemize.git
             cd piper-phonemize
-            git checkout master
+            git checkout 2023.11.14-4
             cd ..
         fi
         cd piper-phonemize
