@@ -41,16 +41,34 @@ The model file will be automatically downloaded if it doesn't exist."
   "Structure for storing voice model information."
   name model-url config-url lang-name lang-code voice quality)
 
-(defun piper--expand-model-path (model)
-  "Expand MODEL to a full path.
-If MODEL is nil, return nil.
-If MODEL is already an absolute path, return it as-is.
-If MODEL is a relative path or just a filename, expand it relative
-to the models directory."
-  (when model
-    (if (file-name-absolute-p model)
-        model
-      (expand-file-name model (expand-file-name "models" (piper--get-install-dir))))))
+(defun piper--ensure-model (model)
+  "Ensure the voice MODEL exists and return its full path.
+If MODEL is nil, use `piper-default-model`.
+If the model file does not exist, attempt to download it."
+  (let* ((model-name (or model piper-default-model))
+         (full-path (if (file-name-absolute-p model-name)
+                        model-name
+                      (expand-file-name model-name (expand-file-name "models" (piper--get-install-dir))))))
+    
+    ;; Check if model exists
+    (unless (file-exists-p full-path)
+      (message "Model %s not found, attempting to download..." (file-name-nondirectory full-path))
+      
+      ;; Ensure we have available models
+      (unless piper--available-models
+        (piper--fetch-available-models))
+      
+      ;; Find the model URL
+      (let* ((target-name (file-name-nondirectory full-path))
+             (model-info (seq-find (lambda (m)
+                                     (string-suffix-p target-name (piper--clean-url (piper-model-model-url m))))
+                                   piper--available-models)))
+        
+        (if model-info
+            (piper--download-model (piper-model-model-url model-info) full-path)
+          (error "Could not find download URL for model: %s" target-name))))
+    
+    full-path))
 
 (defun piper--clean-url (url)
   "Clean URL by removing query parameters and fragments."

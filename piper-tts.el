@@ -238,7 +238,7 @@ Starts the generation loop."
               (piper--start-process 
                normalized-text 
                wav-file 
-               (piper--expand-model-path piper-voice-model)
+               (piper--ensure-model piper-voice-model)
                (lambda (status)
                  (piper--log "Generation completed with status: %s" status)
                  (setq piper--current-process nil)
@@ -293,7 +293,7 @@ Starts the generation loop."
   (unless piper--chunk-processing
     (let ((wav-file (piper--create-temp-wav))
           (normalized-text (piper--normalize-text text)))
-      (piper--start-process normalized-text wav-file (piper--expand-model-path piper-voice-model)
+      (piper--start-process normalized-text wav-file (piper--ensure-model piper-voice-model)
                             (lambda (status)
                               (if (eq status 0)
                                   (piper--play-wav-file wav-file)
