@@ -140,6 +140,13 @@ Prefers to look ahead for the next sentence ending first."
           (when sent-end
             (piper--log "Found sentence end back at %d" sent-end)
             (setq result sent-end)))))
+
+    ;; Strategy 3: Look for clause boundary (comma, etc.)
+    (when (not result)
+      (let ((clause-end (piper--find-clause-boundary text position min-pos)))
+        (when clause-end
+          (piper--log "Found clause end at %d" clause-end)
+          (setq result clause-end))))
     
     ;; Fallback: try to find word boundary near position
     (when (not result)
@@ -152,18 +159,39 @@ Prefers to look ahead for the next sentence ending first."
           position))))
 
 (defun piper--find-word-boundary (text position min-pos)
-  "Find a word boundary in TEXT near POSITION, preferring to look back."
-  (let ((search-start (max min-pos (- position 20)))
-        (search-end (min (length text) (+ position 20))))
-    (save-match-data
-      (let ((substr (substring text search-start search-end))
-            (offset (- position search-start)))
-        ;; Look for whitespace before position
-        (if (string-match "\\s-" substr offset)
-            (+ search-start (match-end 0))
-          ;; Look for whitespace after position
-          (when (string-match "\\s-" substr)
-            (+ search-start (match-end 0))))))))
+  "Find a word boundary in TEXT near POSITION, preferring the closest one.
+Searches up to 50 characters forward and backward."
+  (let* ((search-range 50)
+         (start (max min-pos (- position search-range)))
+         (end (min (length text) (+ position search-range)))
+         (substr (substring text start end))
+         (offset (- position start)))
+    (with-temp-buffer
+      (insert substr)
+      (let ((forward-match nil)
+            (backward-match nil))
+        
+        ;; Look forward
+        (goto-char (1+ offset))
+        (when (re-search-forward "\\s-" nil t)
+          ;; Buffer positions are 1-indexed, convert to 0-indexed string position
+          (setq forward-match (+ start (1- (point)))))
+          
+        ;; Look backward
+        (goto-char (1+ offset))
+        (when (re-search-backward "\\s-" nil t)
+          ;; Buffer positions are 1-indexed, convert to 0-indexed string position
+          (setq backward-match (+ start (1- (match-end 0)))))
+          
+        ;; Return the closest match
+        (cond
+         ((and forward-match backward-match)
+          (if (< (- forward-match position) (- position backward-match))
+              forward-match
+            backward-match))
+         (forward-match forward-match)
+         (backward-match backward-match)
+         (t nil))))))
 
 (defun piper--find-next-paragraph-end (text start-pos end-pos)
   "Find first paragraph end in TEXT between START-POS and END-POS."
@@ -186,14 +214,15 @@ Prefers to look ahead for the next sentence ending first."
 
 (defun piper--find-next-sentence-end (text start-pos end-pos)
   "Find first sentence end in TEXT between START-POS and END-POS.
-Handles common abbreviations to avoid incorrect splits."
+Handles common abbreviations and quotes/parens to avoid incorrect splits."
   (let ((substr (substring text start-pos (min (length text) end-pos)))
         (match-idx 0)
         (found nil)
         (result nil))
     (save-match-data
       (while (and (not found)
-                  (string-match "[.!?]\\s-" substr match-idx))
+                  ;; Match .!? followed by optional quotes/parens, then whitespace
+                  (string-match "[.!?]['\"”’)]*\\s-" substr match-idx))
         (let ((match-pos (match-end 0))
               (match-start (match-beginning 0)))
           ;; Check for abbreviations
@@ -221,11 +250,52 @@ Handles common abbreviations to avoid incorrect splits."
         (last-match nil)
         (start 0))
     (save-match-data
-      (while (string-match "[.!?]\\s-" substr start)
-        (setq last-match (match-end 0))
-        (setq start (match-end 0)))
+      ;; Match .!? followed by optional quotes/parens, then whitespace
+      (while (string-match "[.!?]['\"”’)]*\\s-" substr start)
+        (let ((match-pos (match-end 0))
+              (match-start (match-beginning 0)))
+          ;; Check for abbreviations
+          (if (piper--is-abbreviation-p substr match-start)
+              (setq start match-pos) ;; Skip this match
+            (setq last-match match-pos
+                  start match-pos))))
       (when last-match
         (+ min-pos last-match)))))
+
+(defun piper--find-clause-boundary (text position min-pos)
+  "Find a clause boundary (comma, semicolon, colon) in TEXT near POSITION.
+Prefers looking back from POSITION, but will look forward slightly."
+  (let* ((search-range 30)
+         (start (max min-pos (- position search-range)))
+         (end (min (length text) (+ position search-range)))
+         (substr (substring text start end))
+         (offset (- position start)))
+    (with-temp-buffer
+      (insert substr)
+      (let ((forward-match nil)
+            (backward-match nil))
+        
+        ;; Look forward for comma/semicolon/colon followed by space
+        (goto-char (1+ offset))
+        (when (re-search-forward "[,;:][ \t\n]" nil t)
+          ;; Buffer positions are 1-indexed, convert to 0-indexed string position
+          (setq forward-match (+ start (1- (point)))))
+          
+        ;; Look backward
+        (goto-char (1+ offset))
+        (when (re-search-backward "[,;:][ \t\n]" nil t)
+          ;; Buffer positions are 1-indexed, convert to 0-indexed string position
+          (setq backward-match (+ start (1- (match-end 0)))))
+          
+        ;; Return the closest match, preferring backward if similar distance
+        (cond
+         ((and forward-match backward-match)
+          (if (< (- forward-match position) (- position backward-match))
+              forward-match
+            backward-match))
+         (forward-match forward-match)
+         (backward-match backward-match)
+         (t nil))))))
 
 (defun piper--line-indentation ()
   "Get the indentation level of the current line."
