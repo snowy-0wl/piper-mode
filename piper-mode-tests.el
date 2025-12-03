@@ -83,6 +83,14 @@
     ;; \322 and \323 are Mac Roman " and " interpreted as Latin-1
     (should (string= (piper--normalize-text "\322Carl\323") "“Carl”"))
     ;; \324 and \325 are Mac Roman ' and ' interpreted as Latin-1
-    (should (string= (piper--normalize-text "\324Sn\325") "‘Sn’"))))
+    (should (string= (piper--normalize-text "\324Sn\325") "‘Sn’"))
+    ;; Test preservation of Cyrillic text
+    (should (string= (piper--normalize-text "Привет") "Привет"))
+    ;; Test preservation of Chinese text
+    (should (string= (piper--normalize-text "你好") "你好"))
+    ;; Test preservation of French text (lowercase accents)
+    (should (string= (piper--normalize-text "Resumé") "Resumé"))
+    ;; Test preservation of Spanish text (lowercase accents)
+    (should (string= (piper--normalize-text "Mañana") "Mañana"))))
 
 (provide 'piper-mode-tests)

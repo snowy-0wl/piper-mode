@@ -17,7 +17,9 @@
 (defcustom piper-fix-encoding nil
   "Whether to attempt to fix encoding issues (Mojibake).
 If non-nil, attempts to repair text that looks like Mac Roman interpreted as Latin-1.
-This is useful if you see characters like \\322, \\323, etc. in the logs."
+This is useful if you see characters like \\322, \\323, etc. in the logs.
+Note: This fix is safely skipped for text containing non-Latin-1 characters
+(e.g. Cyrillic, Chinese), but may incorrectly alter valid Latin-1 text."
   :type 'boolean
   :group 'piper)
 
@@ -33,10 +35,20 @@ latency."
   "Normalize TEXT by repairing encoding issues if enabled."
   (let ((result text))
     ;; Optional encoding fix
-    (when piper-fix-encoding
-      (setq result (decode-coding-string 
-                    (encode-coding-string result 'latin-1) 
-                    'mac-roman)))
+    (when (and piper-fix-encoding
+               (let ((systems (find-coding-systems-string text)))
+                 (or (memq 'undecided systems)
+                     (memq 'iso-latin-1 systems))))
+      ;; Check for lowercase accented characters (Latin-1 0xDF-0xF6, 0xF8-0xFF)
+      ;; These indicate valid Latin-1 text (French, Spanish, etc.)
+      ;; Mojibake usually manifests as Uppercase accents (0xC0-0xD6) or symbols.
+      ;; We construct the regex dynamically to ensure correct character matching.
+      (if (string-match-p (format "[%c-%c%c-%c]" #xDF #xF6 #xF8 #xFF) text)
+          (piper--log "Skipping encoding fix for valid Latin-1 text: %s" text)
+        (piper--log "Applying encoding fix for likely Mojibake: %s" text)
+        (setq result (decode-coding-string 
+                      (encode-coding-string result 'latin-1) 
+                      'mac-roman))))
     result))
 
 ;; Chunking variables
