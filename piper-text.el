@@ -31,10 +31,25 @@ latency."
   :type 'integer
   :group 'piper)
 
+(defcustom piper-smart-newline-handling t
+  "Whether to intelligently handle newlines for better TTS flow.
+If non-nil:
+1. Adds pauses after headings and list items
+2. Merges hard-wrapped paragraphs into single lines
+This prevents choppy playback for hard-wrapped text while preserving
+structure for headings and lists."
+  :type 'boolean
+  :group 'piper)
+
 (defun piper--normalize-text (text)
-  "Normalize TEXT by repairing encoding issues if enabled."
+  "Normalize TEXT by repairing encoding issues and optimizing newlines."
   (let ((result text))
-    ;; Optional encoding fix
+    ;; 1. Smart newline handling (if enabled)
+    (when piper-smart-newline-handling
+      (setq result (piper--smart-punctuate result))
+      (setq result (piper--unfill-text result)))
+
+    ;; 2. Optional encoding fix
     (when (and piper-fix-encoding
                (let ((systems (find-coding-systems-string text)))
                  (or (memq 'undecided systems)
@@ -50,6 +65,54 @@ latency."
                       (encode-coding-string result 'latin-1) 
                       'mac-roman))))
     result))
+
+(defun piper--smart-punctuate (text)
+  "Add punctuation to headings and list items to force TTS pauses.
+Scans for semantic lines that should have pauses but don't."
+  (with-temp-buffer
+    (insert text)
+    (goto-char (point-min))
+    (while (re-search-forward "\n" nil t)
+      (unless (looking-at "\n")  ; Skip if next char is also newline (paragraph break)
+        (let* ((before-line (save-excursion 
+                             (forward-line -1)
+                             (buffer-substring (line-beginning-position) 
+                                              (line-end-position))))
+               (after-line (buffer-substring (line-beginning-position)
+                                            (line-end-position)))
+               ;; Decide what pause to inject
+               (pause 
+                (cond
+                 ;; Next line looks like heading: short, starts with capital/symbol
+                 ((and (< (length after-line) 60)
+                       (string-match-p "^[A-Z]" after-line)
+                       (not (string-match-p "^[A-Z][a-z]+ " after-line))) ; Not regular sentence
+                  ". ")
+                 ;; Current line looks like heading ending
+                 ((and (< (length before-line) 60)
+                       (string-match-p "^[A-Z#*0-9-]" before-line)
+                       (not (string-match-p "[.!?;:]\\s-*$" before-line))) ; No punctuation
+                  ". ")
+                 ;; Line ended with sentence punctuation  
+                 ((string-match-p "[.!?]\\s-*$" before-line) ", ")
+                 ;; Line ended with colon (list intro)
+                 ((string-match-p ":\\s-*$" before-line) ". ")
+                 ;; List item markers
+                 ((string-match-p "^[-*]\\s-" after-line) ". ")
+                 ;; Default: no pause injection, let unfill handle it
+                 (t nil))))
+          (when pause
+            (delete-char -1)  ; Remove the \n
+            (insert pause)))))
+    (buffer-string)))
+
+(defun piper--unfill-text (text)
+  "Merge hard-wrapped lines within paragraphs, preserving structure."
+  (with-temp-buffer
+    (insert text)
+    (let ((fill-column most-positive-fixnum))
+      (fill-region (point-min) (point-max)))
+    (buffer-string)))
 
 ;; Chunking variables
 (defvar piper--chunk-queue nil
@@ -71,35 +134,34 @@ latency."
   "Split TEXT into manageable chunks for more responsive playback.
 Returns a list of chunks, or a list with just the original text if small enough."
   (piper--log "Chunking text: length=%d, chunk-size=%d" (length text) piper-chunk-size)
-  (if (<= (length text) piper-chunk-size)
-      ;; If text is smaller than chunk size, return the whole text
-      (list text)
-    (let ((chunks nil)
-          (chunk-start 0)
-          (text-length (length text)))
-      
-      ;; Process all chunks except the last one
-      (while (< (+ chunk-start piper-chunk-size) text-length)
-        (let* ((chunk-end (+ chunk-start piper-chunk-size))
-               ;; Try to find a good boundary (sentence or paragraph end)
-               ;; Must be strictly greater than chunk-start
-               (boundary (piper--find-chunk-boundary text chunk-end chunk-start)))
-          
-          ;; Ensure we make progress
-          (when (<= boundary chunk-start)
-            (piper--log "Warning: boundary %d <= start %d, forcing split at %d" 
-                        boundary chunk-start chunk-end)
-            (setq boundary chunk-end))
+  ;; Allow 20% tolerance to avoid splitting just for a few characters
+  (let ((limit (* piper-chunk-size 1.2)))
+    (if (<= (length text) limit)
+        (list text)
+      (let ((chunks nil)
+            (chunk-start 0)
+            (text-length (length text)))
+        
+        ;; While we have more than a chunk + tolerance remaining
+        (while (< (+ chunk-start limit) text-length)
+          (let* ((chunk-end (+ chunk-start piper-chunk-size))
+                 (boundary (piper--find-chunk-boundary text chunk-end chunk-start)))
             
-          (push (substring text chunk-start boundary) chunks)
-          (setq chunk-start boundary)))
-      
-      ;; Add the last chunk
-      (when (< chunk-start text-length)
-        (push (substring text chunk-start) chunks))
-      
-      ;; Return chunks in the correct order
-      (nreverse chunks))))
+            ;; Ensure we make progress
+            (when (<= boundary chunk-start)
+              (piper--log "Warning: boundary %d <= start %d, forcing split at %d" 
+                          boundary chunk-start chunk-end)
+              (setq boundary chunk-end))
+              
+            (push (substring text chunk-start boundary) chunks)
+            (setq chunk-start boundary)))
+        
+        ;; Add the last chunk
+        (when (< chunk-start text-length)
+          (push (substring text chunk-start) chunks))
+        
+        ;; Return chunks in the correct order
+        (nreverse chunks)))))
 
 (defun piper--find-chunk-boundary (text position min-pos)
   "Find a good boundary in TEXT near POSITION, but not before MIN-POS.

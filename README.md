@@ -111,6 +111,13 @@ The package works out of the box, but you can customize it:
 ;; Enable if smart quotes and similar characters are being pronounced incorrectly.
 ;; This repairs a common encoding issue where clipboard text appears garbled.
 (setq piper-fix-encoding t)
+
+;; Smart Newline Handling (default: t)
+;; Intelligently handles newlines to improve TTS flow:
+;; 1. Adds pauses after headings and list items
+;; 2. Merges hard-wrapped paragraphs into single lines
+;; Set to nil if you prefer raw text processing.
+(setq piper-smart-newline-handling t)
 ```
 
 ### Choosing Voice Models
