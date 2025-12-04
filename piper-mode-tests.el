@@ -106,4 +106,65 @@
            (text (format "The word %cin%c" bad-open bad-close)))
       (should (string= (piper--normalize-text text) "The word “in”")))))
 
+(ert-deftest piper-mode-test-hard-wrapped-paragraph ()
+  "Test that hard-wrapped paragraphs merge into flowing text."
+  (let ((piper-smart-newline-handling t)
+        (input "This is a sentence that has been hard-wrapped at exactly
+eighty characters because someone used fill-paragraph with a
+narrow column setting for their text editor preferences.")
+        (expected "This is a sentence that has been hard-wrapped at exactly eighty characters because someone used fill-paragraph with a narrow column setting for their text editor preferences."))
+    (should (string= (piper--normalize-text input) expected))))
+
+(ert-deftest piper-mode-test-heading-preservation ()
+  "Test that headings get proper pauses."
+  (let ((piper-smart-newline-handling t)
+        (input "End of previous section.
+New Section Heading
+Start of new section here."))
+    (let ((result (piper--normalize-text input)))
+      ;; Should have pauses around the heading
+      (should (string-match-p "section\\." result))
+      (should (string-match-p "Heading\\." result)))))
+
+(ert-deftest piper-mode-test-list-items ()
+  "Test that list items get separated."
+  (let ((piper-smart-newline-handling t)
+        (input "Here are the items:
+- First item
+- Second item
+- Third item"))
+    (let ((result (piper--normalize-text input)))
+      (should (string-match-p "items:" result))
+      (should (string-match-p "First item" result)))))
+
+(ert-deftest piper-mode-test-paragraph-breaks ()
+  "Test that paragraph breaks (double newlines) are preserved."
+  (let ((piper-smart-newline-handling t)
+        (input "First paragraph here.
+
+Second paragraph here."))
+    (let ((result (piper--normalize-text input)))
+      ;; Should still have separation (unfill preserves double newlines)
+      (should (string-match-p "here\\." result)))))
+
+(ert-deftest piper-mode-test-report-structure ()
+  "Test a realistic report structure."
+  (let ((piper-smart-newline-handling t)
+        (input "Executive Summary
+This report provides an analysis of the quarterly results which
+have been compiled from various departments and reviewed by the
+management team for accuracy and completeness.
+
+Key Findings
+Revenue increased by 15 percent during this period.
+Costs were reduced through efficiency improvements.
+
+Conclusion
+The quarter was successful overall."))
+    (let ((result (piper--normalize-text input)))
+      ;; Headings should appear in output with punctuation added
+      (should (string-match-p "Summary\\." result))
+      (should (string-match-p "Findings\\." result))
+      (should (string-match-p "Conclusion\\." result)))))
+
 (provide 'piper-mode-tests)

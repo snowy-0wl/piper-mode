@@ -56,18 +56,13 @@ structure for headings and lists."
       ;; And ensure no valid Lowercase Accents (0xDF-0xF6, 0xF8-0xFF) are present
       ;; (including their eight-bit versions) to avoid breaking valid languages.
       (let ((case-fold-search nil))
-        (if (and (string-match-p (format "[%c-%c%c-%c]" 
-                                       #xC0 #xD6 
-                                       #x3FFFC0 #x3FFFD6) text)
-                 (not (string-match-p (format "[%c-%c%c-%c%c-%c%c-%c]" 
-                                            #xDF #xF6 #xF8 #xFF
-                                            #x3FFFDF #x3FFFF6 #x3FFFF8 #x3FFFFF) text)))
+        (if (and (string-match-p (rx (any (#xC0 . #xD6) (#x3FFFC0 . #x3FFFD6))) text)
+                 (not (string-match-p (rx (any (#xDF . #xF6) (#xF8 . #xFF)
+                                               (#x3FFFDF . #x3FFFF6) (#x3FFFF8 . #x3FFFFF))) text)))
             (progn
               (piper--log "Applying encoding fix for likely Mojibake in: %s" text)
               (setq result (replace-regexp-in-string
-                            (format "[%c-%c%c-%c]+" 
-                                    #xC0 #xD6
-                                    #x3FFFC0 #x3FFFD6)
+                            (rx (1+ (any (#xC0 . #xD6) (#x3FFFC0 . #x3FFFD6))))
                             (lambda (match)
                               (decode-coding-string 
                                (encode-coding-string match 'latin-1) 
@@ -82,38 +77,44 @@ Scans for semantic lines that should have pauses but don't."
   (with-temp-buffer
     (insert text)
     (goto-char (point-min))
-    (while (re-search-forward "\n" nil t)
-      (unless (looking-at "\n")  ; Skip if next char is also newline (paragraph break)
-        (let* ((before-line (save-excursion 
-                             (forward-line -1)
-                             (buffer-substring (line-beginning-position) 
-                                              (line-end-position))))
-               (after-line (buffer-substring (line-beginning-position)
-                                            (line-end-position)))
-               ;; Decide what pause to inject
-               (pause 
-                (cond
-                 ;; Next line looks like heading: short, starts with capital/symbol
-                 ((and (< (length after-line) 60)
-                       (string-match-p "^[A-Z]" after-line)
-                       (not (string-match-p "^[A-Z][a-z]+ " after-line))) ; Not regular sentence
-                  ". ")
-                 ;; Current line looks like heading ending
-                 ((and (< (length before-line) 60)
-                       (string-match-p "^[A-Z#*0-9-]" before-line)
-                       (not (string-match-p "[.!?;:]\\s-*$" before-line))) ; No punctuation
-                  ". ")
-                 ;; Line ended with sentence punctuation  
-                 ((string-match-p "[.!?]\\s-*$" before-line) ", ")
-                 ;; Line ended with colon (list intro)
-                 ((string-match-p ":\\s-*$" before-line) ". ")
-                 ;; List item markers
-                 ((string-match-p "^[-*]\\s-" after-line) ". ")
-                 ;; Default: no pause injection, let unfill handle it
-                 (t nil))))
-          (when pause
-            (delete-char -1)  ; Remove the \n
-            (insert pause)))))
+    (let ((case-fold-search nil))
+      (while (re-search-forward "\n" nil t)
+        (unless (looking-at "\n")  ; Skip if next char is also newline (paragraph break)
+          (let* ((before-line (save-excursion 
+                                (forward-line -1)
+                                (buffer-substring (line-beginning-position) 
+                                                  (line-end-position))))
+                 (after-line (buffer-substring (line-beginning-position)
+                                               (line-end-position)))
+                 ;; Decide what pause to inject
+                 (pause 
+                  (cond
+                   ;; Next line looks like heading: short, starts with capital/symbol
+                   ((and (< (length after-line) 60)
+                         (string-match-p (rx bol (any "A-Z")) after-line)
+                         (not (string-match-p (rx bol (any "A-Z") (1+ (any "a-z")) space) after-line))) ; Not regular sentence
+                    ".")
+                   ;; Current line looks like heading ending
+                   ((and (< (length before-line) 60)
+                         (string-match-p (rx bol (any "A-Z" "#" "*" "0-9" "-")) before-line)
+                         (not (string-match-p (rx (any ".!?;:") (0+ space) eol) before-line)) ; No punctuation
+                         ;; Ensure next line doesn't look like a sentence continuation (starts with lowercase)
+                         (not (string-match-p (rx bol (any "a-z")) after-line)))
+                    ".")
+                   ;; Line ended with sentence punctuation  
+                   ((string-match-p (rx (any ".!?") (0+ space) eol) before-line) ",")
+                   ;; Line ended with colon (list intro)
+                   ((string-match-p (rx ":" (0+ space) eol) before-line) ".")
+                   ;; List item markers
+                   ((string-match-p (rx bol (any "-*") space) after-line) ".")
+                   ;; Default: no pause injection, let unfill handle it
+                   (t nil))))
+            (when pause
+              ;; Insert pause BEFORE the newline.
+              ;; We strip the trailing space from the pause because unfill will add a space.
+              (backward-char 1)
+              (insert pause)
+              (forward-char 1))))))
     (buffer-string)))
 
 (defun piper--unfill-text (text)

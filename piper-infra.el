@@ -139,6 +139,23 @@ Only runs if we are using the default installation directory within straight."
     (unless (executable-find "sox")
       (error "SoX not found. Please install it (e.g., 'brew install sox')"))))
 
+(defun piper-check-dependencies ()
+  "Check if all runtime dependencies are met.
+Returns t if all dependencies are found, nil otherwise."
+  (interactive)
+  (let ((has-sox (or (executable-find "sox") (executable-find "play")))
+        (has-piper (file-exists-p (expand-file-name "bin/piper" (piper--get-install-dir)))))
+    (if (and has-sox has-piper)
+        (progn
+          (when (called-interactively-p 'any)
+            (message "All dependencies found."))
+          t)
+      (when (called-interactively-p 'any)
+        (if has-sox
+            (message "Missing Piper binary. Run M-x piper-update.")
+          (message "Missing SoX/Play. Please install sox.")))
+      nil)))
+
 (defun piper--ensure-setup ()
   "Ensure Piper is properly set up by running the setup script if needed."
   (unless piper--setup-done
@@ -247,30 +264,17 @@ Only runs if we are using the default installation directory within straight."
 
     (not has-non-elisp-changes)))
 
-(defun piper--before-straight-rebuild (orig-fun &rest args)
-  "Advice to run before straight-rebuild-package for piper-mode.
-  When in development mode and only Elisp files have changed,
-  this will avoid rebuilding native components."
-  (when (equal (car args) "piper-mode")
-    (if (and piper-development-mode (piper--elisp-only-changes-p))
-        (progn
-          (when piper-debug
-            (message "[piper] Development mode: Skipping native component rebuild"))
-          ;; Still need to load the Elisp files
-          (let ((default-directory (file-name-directory (locate-library "piper-mode"))))
-            (load (expand-file-name "piper-mode.el") nil t))
-          ;; Skip the original function by returning a dummy value
-          'development-mode-skip)
-      ;; Not in development mode or non-elisp changes detected
-      (when piper-debug
-        (message "[piper] Full rebuild: %s" 
-                 (if piper-development-mode 
-                     "Non-elisp changes detected" 
-                     "Development mode disabled")))
-      (piper--handle-straight-build)
-      (apply orig-fun args))))
-
-(advice-add 'straight-rebuild-package :around #'piper--before-straight-rebuild)
+(defun piper-dev-reload ()
+  "Reload piper-mode Elisp files for development.
+This avoids rebuilding native components when only Elisp has changed."
+  (interactive)
+  (let ((default-directory (piper--get-install-dir)))
+    (load (expand-file-name "piper-infra.el" piper--source-dir))
+    (load (expand-file-name "piper-text.el" piper--source-dir))
+    (load (expand-file-name "piper-models.el" piper--source-dir))
+    (load (expand-file-name "piper-tts.el" piper--source-dir))
+    (load (expand-file-name "piper-mode.el" piper--source-dir))
+    (message "Piper mode reloaded.")))
 
 (provide 'piper-infra)
 ;;; piper-infra.el ends here

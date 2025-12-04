@@ -304,21 +304,18 @@ Starts the generation loop."
   (let* ((first-chunk (car batch))
          (start-pos (nth 1 first-chunk))
          (last-chunk (car (last batch)))
-         (end-pos (nth 2 last-chunk))
-         (sox-concat-cmd (format "sox %s -t wav - | play -t wav -"
-                                (mapconcat #'shell-quote-argument
-                                          wav-files " "))))
+         (end-pos (nth 2 last-chunk)))
     
     (piper--update-highlight start-pos end-pos)
     (piper--log "Batch highlight: %s-%s" start-pos end-pos)
-    (piper--log "Batch command: %s" sox-concat-cmd)
     
     (setq piper--current-batch batch)
     
+    ;; Use 'play' directly with multiple files instead of shell pipe
     (setq piper--play-process
           (make-process
            :name "piper-batch-play"
-           :command (list "sh" "-c" sox-concat-cmd)
+           :command (append (list "play") wav-files)
            :buffer (get-buffer-create "*piper-play*")
            :sentinel (lambda (proc event)
                       (piper--log "Batch play event: %s" (string-trim event))
@@ -337,10 +334,10 @@ Starts the generation loop."
                             (setq piper--current-batch nil)
                             (setq piper--play-process nil)
                             
-                            ;; Check if sox failed
+                            ;; Check if play failed
                             (if (not (= exit-status 0))
                                 (progn
-                                  (piper--log "Sox/play failed with exit code %d" exit-status)
+                                  (piper--log "Play failed with exit code %d" exit-status)
                                   (message "Piper: Audio playback failed"))
                               ;; Success - continue processing
                               (if (not piper--chunk-processing)
