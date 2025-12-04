@@ -50,20 +50,30 @@ structure for headings and lists."
       (setq result (piper--unfill-text result)))
 
     ;; 2. Optional encoding fix
-    (when (and piper-fix-encoding
-               (let ((systems (find-coding-systems-string text)))
-                 (or (memq 'undecided systems)
-                     (memq 'iso-latin-1 systems))))
-      ;; Check for lowercase accented characters (Latin-1 0xDF-0xF6, 0xF8-0xFF)
-      ;; These indicate valid Latin-1 text (French, Spanish, etc.)
-      ;; Mojibake usually manifests as Uppercase accents (0xC0-0xD6) or symbols.
-      ;; We construct the regex dynamically to ensure correct character matching.
-      (if (string-match-p (format "[%c-%c%c-%c]" #xDF #xF6 #xF8 #xFF) text)
-          (piper--log "Skipping encoding fix for valid Latin-1 text: %s" text)
-        (piper--log "Applying encoding fix for likely Mojibake: %s" text)
-        (setq result (decode-coding-string 
-                      (encode-coding-string result 'latin-1) 
-                      'mac-roman))))
+    (when piper-fix-encoding
+      ;; Check for likely Mojibake (Uppercase Accents 0xC0-0xD6)
+      ;; Also check for Emacs "eight-bit" chars (0x3FFFC0-0x3FFFD6)
+      ;; And ensure no valid Lowercase Accents (0xDF-0xF6, 0xF8-0xFF) are present
+      ;; (including their eight-bit versions) to avoid breaking valid languages.
+      (let ((case-fold-search nil))
+        (if (and (string-match-p (format "[%c-%c%c-%c]" 
+                                       #xC0 #xD6 
+                                       #x3FFFC0 #x3FFFD6) text)
+                 (not (string-match-p (format "[%c-%c%c-%c%c-%c%c-%c]" 
+                                            #xDF #xF6 #xF8 #xFF
+                                            #x3FFFDF #x3FFFF6 #x3FFFF8 #x3FFFFF) text)))
+            (progn
+              (piper--log "Applying encoding fix for likely Mojibake in: %s" text)
+              (setq result (replace-regexp-in-string
+                            (format "[%c-%c%c-%c]+" 
+                                    #xC0 #xD6
+                                    #x3FFFC0 #x3FFFD6)
+                            (lambda (match)
+                              (decode-coding-string 
+                               (encode-coding-string match 'latin-1) 
+                               'mac-roman))
+                            result t)))
+          (piper--log "Skipping encoding fix (no Mojibake or valid Latin-1 present): %s" text))))
     result))
 
 (defun piper--smart-punctuate (text)

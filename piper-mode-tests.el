@@ -79,11 +79,12 @@
 
 (ert-deftest piper-test-fix-encoding ()
   "Test that `piper-fix-encoding` correctly repairs Mojibake."
-  (let ((piper-fix-encoding t))
+  (let ((piper-fix-encoding t)
+        (piper-smart-newline-handling nil))
     ;; \322 and \323 are Mac Roman " and " interpreted as Latin-1
-    (should (string= (piper--normalize-text "\322Carl\323") "“Carl”"))
+    (should (string= (piper--normalize-text (string ?\322 ?C ?a ?r ?l ?\323)) "“Carl”"))
     ;; \324 and \325 are Mac Roman ' and ' interpreted as Latin-1
-    (should (string= (piper--normalize-text "\324Sn\325") "‘Sn’"))
+    (should (string= (piper--normalize-text (string ?\324 ?S ?n ?\325)) "‘Sn’"))
     ;; Test preservation of Cyrillic text
     (should (string= (piper--normalize-text "Привет") "Привет"))
     ;; Test preservation of Chinese text
@@ -91,6 +92,18 @@
     ;; Test preservation of French text (lowercase accents)
     (should (string= (piper--normalize-text "Resumé") "Resumé"))
     ;; Test preservation of Spanish text (lowercase accents)
-    (should (string= (piper--normalize-text "Mañana") "Mañana"))))
+    (should (string= (piper--normalize-text "Mañana") "Mañana"))
+    
+    ;; Test mixed content (Mojibake + Unicode)
+    ;; Ò is \322, Em-dash is \u2014
+    (should (string= (piper--normalize-text (format "The %c%c%c%c %c" ?\322 ?i ?n ?\323 ?\u2014)) 
+                     (format "The “in” %c" ?\u2014)))
+                     
+    ;; Test eight-bit characters (Mojibake as raw bytes 0x3FFFxx)
+    ;; 0x3FFFD2 is \322 as an eight-bit char
+    (let* ((bad-open #x3FFFD2)
+           (bad-close #x3FFFD3)
+           (text (format "The word %cin%c" bad-open bad-close)))
+      (should (string= (piper--normalize-text text) "The word “in”")))))
 
 (provide 'piper-mode-tests)
